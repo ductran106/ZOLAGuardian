@@ -1,0 +1,4 @@
+node_modules/
+data/guardian.db
+config.json
+*.log

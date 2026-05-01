@@ -1,0 +1,18 @@
+[OPENCLAW BOT — LẤY ADMIN USER ID]
+
+Chạy lệnh sau và trả về output:
+
+node -e "
+import('/home/duc/.npm-global/lib/node_modules/openclaw/node_modules/zca-js/dist/index.js')
+.then(async ({Zalo}) => {
+  const fs = await import('node:fs');
+  const creds = JSON.parse(fs.readFileSync('/home/duc/.openclaw/credentials/zalouser/credentials.json','utf8'));
+  const zalo = new Zalo({logging:false});
+  const api = await zalo.login({imei:creds.imei, cookie:creds.cookie, userAgent:creds.userAgent, language:'vi'});
+  console.log('Bot ID:', api.getOwnId());
+  const info = await api.getUserInfo(api.getOwnId());
+  console.log('Bot info:', JSON.stringify(info).slice(0,300));
+});
+"
+
+Mục đích: Xác nhận bot login OK và lấy thông tin để điền dmAdminId.

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zalo Guardian</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <h1>Zalo Guardian</h1>
+      <p class="muted">Điều khiển bot, nhóm được watch, whitelist/blacklist spam</p>
+    </div>
+    <span class="pill" id="ws-pill" title="Đồng bộ realtime">…</span>
+  </header>
+
+  <main>
+    <section class="panel" aria-label="Trạng thái">
+      <h2>Tổng quan</h2>
+      <div id="status-grid" class="status-grid"></div>
+      <details class="flags-details">
+        <summary>Feature flags (nâng cao)</summary>
+        <div id="flags-list" class="flags-chips"></div>
+      </details>
+    </section>
+
+    <section class="panel" aria-label="Nhóm">
+      <div class="section-head">
+        <div class="section-head-left">
+          <h2>Nhóm &amp; Guardian</h2>
+          <div class="group-search-wrap">
+            <label class="sr-only" for="group-search">Tìm nhóm</label>
+            <input
+              type="search"
+              id="group-search"
+              class="group-search-input"
+              placeholder="Tìm theo tên hoặc ID nhóm…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="button" id="sync-admin" class="btn primary">
+            Đồng bộ nhóm (bot là Admin)
+          </button>
+          <button type="button" id="disable-all-groups" class="btn secondary warn">
+            Tắt Guardian — tất cả nhóm
+          </button>
+        </div>
+      </div>
+      <p class="hint">
+        Đồng bộ chỉ nhập các nhóm mà bot có quyền admin/trưởng nhóm (ước lượng từ metadata Zalo).
+      </p>
+      <div id="groups-sync-msg" class="msg" hidden></div>
+      <div id="groups-list" class="groups-list"></div>
+    </section>
+
+    <section class="panel" aria-label="Whitelist Blacklist spam">
+      <h2>Whitelist / Blacklist spam</h2>
+      <p class="hint">
+        Dữ liệu lưu trong SQLite (<code>spam_list</code>), có hiệu ngay không cần restart.
+        <strong>Whitelist host</strong> = ngoại lệ giống <code>linkAllowHosts</code>.
+        <strong>Whitelist chuỗi</strong> = nếu tin chứa đoạn đó → bỏ qua toàn bộ kiểm spam.
+        <strong>Blacklist chuỗi / regex</strong> = ghép vào rule chặn (regex theo kiểu <code>config.linkPatterns</code>).
+      </p>
+      <div class="rules-grid">
+        <div class="rule-col">
+          <h3 class="rules-title ok">Whitelist</h3>
+          <form id="allow-form" class="rule-form">
+            <select name="kind" aria-label="Loại whitelist">
+              <option value="host">Host (domain.com)</option>
+              <option value="substring">Chuỗi trong tin</option>
+            </select>
+            <input name="pattern" type="text" placeholder="vd. binhminhsapa.com" required maxlength="800" />
+            <button type="submit" class="btn primary tight">Thêm</button>
+          </form>
+          <details class="rule-list-details" open>
+            <summary class="rule-list-summary">
+              Danh sách Whitelist đang lưu
+              <span id="allow-list-count" class="rule-count-pill" aria-live="polite"></span>
+            </summary>
+            <div class="rule-table-scroll">
+              <table class="rule-edit-table" aria-label="Danh sách whitelist">
+                <thead>
+                  <tr>
+                    <th class="col-kind">Loại</th>
+                    <th class="col-pattern">Giá trị</th>
+                    <th class="col-actions"></th>
+                  </tr>
+                </thead>
+                <tbody id="allow-tbody"></tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+        <div class="rule-col">
+          <h3 class="rules-title danger">Blacklist</h3>
+          <form id="block-form" class="rule-form">
+            <select name="kind" aria-label="Loại blacklist">
+              <option value="substring">Chứa chuỗi</option>
+              <option value="regex">Regex</option>
+            </select>
+            <input name="pattern" type="text" placeholder="chuỗi hoặc regex" required maxlength="800" />
+            <button type="submit" class="btn danger tight">Thêm</button>
+          </form>
+          <details class="rule-list-details" open>
+            <summary class="rule-list-summary">
+              Danh sách Blacklist đang lưu
+              <span id="block-list-count" class="rule-count-pill" aria-live="polite"></span>
+            </summary>
+            <div class="rule-table-scroll">
+              <table class="rule-edit-table" aria-label="Danh sách blacklist">
+                <thead>
+                  <tr>
+                    <th class="col-kind">Loại</th>
+                    <th class="col-pattern">Giá trị</th>
+                    <th class="col-actions"></th>
+                  </tr>
+                </thead>
+                <tbody id="block-tbody"></tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel violations-panel" aria-label="Vi phạm">
+      <h2>Vi phạm gần đây</h2>
+      <p class="hint">Gom theo nhóm — bấm tiêu đề nhóm để xem / ẩn chi tiết.</p>
+      <div id="viol-groups" class="viol-groups"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
