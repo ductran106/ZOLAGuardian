@@ -8,15 +8,33 @@ import { detectSpam } from "./spam.js";
 import { detectUndo } from "./undo.js";
 import {
   dmAdmin,
-  quoteReply,
+  sendQuotedViolationNotice,
+  sendUndoNotice,
   deleteSpamMessage,
   buildViolationDM,
-  buildViolationReply,
   buildUndoDM,
 } from "./notifier.js";
+import {
+  timeLabelGMT7,
+  formatSpamEvidencePlain,
+  formatUndoEvidencePlain,
+  sendTelegramEvidence,
+} from "./telegramNotify.js";
 
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [guardian] ${msg}`);
+const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+
+function isViolationRuleEnabled(groupId, type) {
+  const t = String(type || "");
+  if (!VIOLATION_TYPES.includes(t)) return true;
+  const row = db
+    .prepare(
+      "SELECT enabled FROM group_violation_rules WHERE group_id = ? AND type = ?"
+    )
+    .get(groupId, t);
+  return !row || Number(row.enabled) === 1;
+}
 
 export function startGuardian(config) {
   // Seed watch_groups từ config vào DB
@@ -72,8 +90,33 @@ export function startGuardian(config) {
     const adminIds = JSON.parse(watchGroup.admin_ids || "[]");
     const violation = detectSpam(msg, config, adminIds);
     if (!violation) return;
+    if (!isViolationRuleEnabled(groupId, violation.type)) return;
 
     log(`Violation: ${violation.type} by ${displayName} in ${groupId}`);
+
+    const timeLabel = timeLabelGMT7();
+    const plainEvidence = formatSpamEvidencePlain({
+      groupName: watchGroup.name || "",
+      groupId,
+      displayName,
+      senderId,
+      type: violation.type,
+      detail: violation.detail,
+      content: violation.content,
+      timeLabel,
+    });
+
+    await sendTelegramEvidence(config, {
+      plainText: plainEvidence,
+    });
+
+    await sendQuotedViolationNotice(
+      api,
+      msg,
+      watchGroup.alert_group_id,
+      displayName,
+      violation
+    );
 
     await deleteSpamMessage(api, msg);
 
@@ -101,11 +144,6 @@ export function startGuardian(config) {
       );
     }
 
-    await quoteReply(
-      api, watchGroup.alert_group_id, msgId,
-      buildViolationReply(displayName, violation.type)
-    );
-
     eventBus.emit("guardian:violation", {
       type: violation.type,
       displayName, groupId,
@@ -120,6 +158,13 @@ export function startGuardian(config) {
 
     const undoInfo = detectUndo(data);
     if (!undoInfo) return;
+
+    // Chỉ xử lý UNDO trong nhóm đang watch + đang bật Shield.
+    const watchedEnabledGroup = db
+      .prepare("SELECT * FROM watch_groups WHERE group_id = ? AND enabled = 1")
+      .get(undoInfo.groupId);
+    if (!watchedEnabledGroup) return;
+    if (!isViolationRuleEnabled(undoInfo.groupId, "UNDO")) return;
 
     // Lookup nội dung bằng realMsgId trước, fallback về msgId
     // msg_id là TEXT trong DB — bind kiểu số có thể không khớp.
@@ -150,16 +195,34 @@ export function startGuardian(config) {
       undoInfo.cachedContent || ""
     );
 
-    const watchGroup = db
-      .prepare("SELECT * FROM watch_groups WHERE group_id = ?")
-      .get(undoInfo.groupId);
-
     const groupNameRow = db
       .prepare("SELECT name FROM group_names WHERE group_id = ?")
       .get(undoInfo.groupId);
 
     const groupName =
-      watchGroup?.name || groupNameRow?.name || undoInfo.groupId;
+      watchedEnabledGroup?.name || groupNameRow?.name || undoInfo.groupId;
+
+    const timeLabelUndo = timeLabelGMT7();
+    const plainUndo = formatUndoEvidencePlain({
+      groupName,
+      groupId: String(undoInfo.groupId || ""),
+      displayName: undoInfo.displayName || "",
+      senderId: String(undoInfo.senderId || ""),
+      recalledContent: undoInfo.cachedContent,
+      timeLabel: timeLabelUndo,
+    });
+    await sendTelegramEvidence(config, {
+      plainText: plainUndo,
+    });
+
+    await sendUndoNotice(
+      api,
+      watchedEnabledGroup.alert_group_id || undoInfo.groupId,
+      groupName,
+      undoInfo.displayName,
+      undoInfo.senderId,
+      undoInfo.cachedContent
+    );
 
     if (config.dmAdminId && config.dmAdminId !== "ADMIN_USER_ID_HERE") {
       await dmAdmin(

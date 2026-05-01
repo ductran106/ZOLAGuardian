@@ -66,6 +66,14 @@ db.exec(`
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (list_type, pattern)
   );
+
+  CREATE TABLE IF NOT EXISTS group_violation_rules (
+    group_id   TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, type)
+  );
 `);
 
 // Seed default feature flags nếu chưa có

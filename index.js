@@ -1,14 +1,9 @@
 // index.js
 // Mục đích: Entry point — khởi động toàn hệ thống theo thứ tự
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+import { loadConfig } from "./core/loadConfig.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const config = JSON.parse(
-  readFileSync(path.join(__dirname, "config.json"), "utf8")
-);
+const config = loadConfig();
 
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [index] ${msg}`);

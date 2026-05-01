@@ -3,13 +3,8 @@
 // Đây là cầu nối duy nhất giữa zca-js và phần còn lại của hệ thống
 
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import eventBus from "./eventBus.js";
 import db from "./db.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, "../config.json");
 
 let api = null;
 
@@ -81,8 +76,8 @@ export async function startZalo(config) {
       }
     }
 
-    const isWatched = config.watchGroups.some((g) => g.groupId === msgGroupId);
-    if (!isWatched) return;
+    // Không lọc theo config.watchGroups cứng.
+    // Guardian sẽ tự lọc theo watch_groups (DB) + enabled realtime.
     eventBus.emit("zalo:message", { api, msg });
   });
 
@@ -95,7 +90,6 @@ export async function startZalo(config) {
 
   // Cache tên groups (chỉ cache watched groups + batch để tránh lỗi API)
   try {
-    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
     const watchedIds = (config.watchGroups || []).map((g) => g.groupId);
 
     if (watchedIds.length > 0) {

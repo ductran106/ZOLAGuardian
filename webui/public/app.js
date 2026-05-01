@@ -137,6 +137,14 @@ async function loadStatus() {
 }
 
 let cachedGroupItems = [];
+const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+const VIOLATION_LABELS = {
+  LINK_SPAM: "LINK_SPAM",
+  SPAM_Emoji: "SPAM_Emoji",
+  STICKER: "STICKER",
+  REPEAT: "REPEAT",
+  UNDO: "UNDO (thu hồi)",
+};
 
 function filterGroupsBySearch(items, q) {
   const s = String(q || "").trim().toLowerCase();
@@ -191,18 +199,50 @@ function renderGroupCards(items) {
     const id = String(g.group_id);
     const row = document.createElement("div");
     row.className = "group-card";
+    let adminLines = "";
+    try {
+      const arr = JSON.parse(g.admin_ids || "[]");
+      adminLines = Array.isArray(arr) ? arr.join("\n") : "";
+    } catch {
+      adminLines = "";
+    }
+    const rules = g.violation_rules && typeof g.violation_rules === "object"
+      ? g.violation_rules
+      : {};
+    const togglesHtml = VIOLATION_TYPES.map((t) => {
+      const onRule = rules[t] !== false;
+      return `<label class="vio-rule-item">
+          <input type="checkbox" class="vio-rule-toggle" data-type="${escapeHtml(t)}" ${onRule ? "checked" : ""} />
+          <span>${escapeHtml(VIOLATION_LABELS[t] || t)}</span>
+        </label>`;
+    }).join("");
     row.innerHTML = `
-        <div class="group-meta">
-          <div class="group-title-row">
-            <strong>${escapeHtml(g.name || "(Không tên)")}</strong>
-            <button type="button" class="btn-mini leave leave-group-btn" data-gid="${escapeHtml(id)}" title="Rời nhóm Zalo và gỡ khỏi danh sách">Thoát nhóm</button>
+        <div class="group-card-top">
+          <div class="group-meta">
+            <div class="group-title-row">
+              <strong>${escapeHtml(g.name || "(Không tên)")}</strong>
+              <button type="button" class="btn-mini leave leave-group-btn" data-gid="${escapeHtml(id)}" title="Rời nhóm Zalo và gỡ khỏi danh sách">Thoát nhóm</button>
+            </div>
+            <code>${escapeHtml(id)}</code>
           </div>
-          <code>${escapeHtml(id)}</code>
+          <div class="toggle-wrap">
+            <input type="checkbox" class="switch" ${on ? "checked" : ""} aria-label="Guardian ${escapeHtml(id)}" data-gid="${escapeHtml(id)}" />
+            <label>Shield</label>
+          </div>
         </div>
-        <div class="toggle-wrap">
-          <input type="checkbox" class="switch" ${on ? "checked" : ""} aria-label="Guardian ${escapeHtml(id)}" data-gid="${escapeHtml(id)}" />
-          <label>Shield</label>
-        </div>
+        <details class="group-extra-box">
+          <summary class="group-extra-summary">Bật/tắt vi phạm theo room</summary>
+          <div class="vio-rules-grid">${togglesHtml}</div>
+          <button type="button" class="btn-mini primary save-rules-btn">Lưu rule vi phạm</button>
+        </details>
+        <details class="group-extra-box">
+          <summary class="group-extra-summary">Miễn kiểm spam (admin)</summary>
+          <div class="group-admin-edit">
+            <label class="admin-edit-label">UID Zalo, một dòng một ID</label>
+            <textarea class="admin-ids-input" rows="3" placeholder="Để trống = không ai được miễn" spellcheck="false">${escapeHtml(adminLines)}</textarea>
+            <button type="button" class="btn-mini primary save-admins-btn">Lưu admin</button>
+          </div>
+        </details>
       `;
     const leaveBtn = row.querySelector(".leave-group-btn");
     leaveBtn?.addEventListener("click", async () => {
@@ -240,6 +280,50 @@ function renderGroupCards(items) {
         chk.checked = !chk.checked;
       } finally {
         chk.disabled = false;
+      }
+    });
+    const saveAdmins = row.querySelector(".save-admins-btn");
+    const ta = row.querySelector(".admin-ids-input");
+    saveAdmins?.addEventListener("click", async () => {
+      const lines = String(ta?.value || "")
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      saveAdmins.disabled = true;
+      try {
+        await fetchJSON(`/api/groups/${encodeURIComponent(id)}/admins`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ adminIds: lines }),
+        });
+        toast("Đã lưu danh sách admin miễn trừ.");
+        await loadGroups();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        saveAdmins.disabled = false;
+      }
+    });
+    const saveRules = row.querySelector(".save-rules-btn");
+    saveRules?.addEventListener("click", async () => {
+      const ruleInputs = [...row.querySelectorAll(".vio-rule-toggle")];
+      const bodyRules = {};
+      for (const inp of ruleInputs) {
+        bodyRules[inp.getAttribute("data-type")] = !!inp.checked;
+      }
+      saveRules.disabled = true;
+      try {
+        await fetchJSON(`/api/groups/${encodeURIComponent(id)}/rules`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rules: bodyRules }),
+        });
+        toast("Đã lưu rule vi phạm.");
+        await loadGroups();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        saveRules.disabled = false;
       }
     });
     root.appendChild(row);

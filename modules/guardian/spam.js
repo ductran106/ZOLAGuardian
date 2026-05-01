@@ -1,10 +1,17 @@
 // modules/guardian/spam.js
 // Mục đích: Detect các loại spam — link, repeat, emoji-only, sticker
 // Rules từ config.json + spam_list trong DB
+//
+// REPEAT:
+// - Cửa sổ thời gian: cùng người + cùng nhóm + cùng nội dung, đủ repeatThreshold lần trong repeatWindowSeconds.
+// - Hoặc chuỗi liền kề theo timeline nhóm: cùng người + cùng nội dung liên tiếp, đủ repeatConsecutiveThreshold.
 
 import { getEffectiveSpamConfig } from "../../core/spamRules.js";
 
-const recentMessages = new Map();
+/** Cửa sổ REPEAT: key sender+group+content -> timestamps[] */
+const repeatWindowMap = new Map();
+/** Chuỗi liền kề trong timeline nhóm: key group -> { senderId, content, count } */
+const groupConsecutiveMap = new Map();
 
 /** Gom mọi giá trị nguyên thuỷ từ content (string / object lồng / mảng) để quét spam. */
 function collectPrimitiveStrings(value, out, depth, seen) {
@@ -99,15 +106,52 @@ function buildEmojiProbe(content, safeContent) {
   return safeContent;
 }
 
-function isEmojiOnly(text) {
-  if (!text || text.trim() === "") return false;
-  // Match cả Unicode emoji lẫn Zalo shortcode dạng :x :D :p
-  const withoutEmoji = text
-    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
-    .replace(/:[a-zA-Z0-9_]+:/g, "")
-    .replace(/:[a-z]/gi, "")
+function isEmojiOnly(text, mode = "strict") {
+  const src = String(text || "").normalize("NFKC").trim();
+  if (!src) return false;
+
+  const emojiRe = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}]/gu;
+  const joinerRe = /[\u200D\uFE0F\u20E3]/g;
+  const keycapRe = /[0-9#*]\u20E3/g;
+  const shortcodeRe = /:[a-zA-Z0-9_+-]+:/g;
+  const emoticonTokenRe = /(?:^|\s)[:;=8xX]-?[a-z_+)(dpov3]+(?=\s|$)/gi;
+  const slashIconTokenRe = /(?:^|\s)\/-[a-z0-9_+-]+(?=\s|$)/gi;
+
+  // Yêu cầu vận hành:
+  // - strict: không có chữ/số + có emoji/emoticon => spam
+  // - balanced: thêm kiểm tra residue để giảm false-positive
+  const plainAfterEmoji = src
+    .replace(emojiRe, "")
+    .replace(joinerRe, "")
+    .replace(keycapRe, "")
+    .replace(shortcodeRe, " ")
+    .replace(emoticonTokenRe, " ")
+    .replace(slashIconTokenRe, " ")
+    .replace(/[\p{P}\p{S}\s]/gu, "")
     .trim();
-  return withoutEmoji.length === 0;
+  const hasText = /[\p{L}\p{N}]/u.test(plainAfterEmoji);
+  if (hasText) return false;
+
+  const hasUnicodeEmoji =
+    /[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}]/u.test(src);
+  const hasZaloEmoticon =
+    /:[a-zA-Z0-9_+-]+:|(?:^|\s)[:;=8xX]-?[a-z_+)(dpov3]+(?=\s|$)|(?:^|\s)\/-[a-z0-9_+-]+(?=\s|$)/i.test(
+      src
+    );
+  if (!hasUnicodeEmoji && !hasZaloEmoticon) return false;
+
+  if (mode === "strict") return true;
+
+  const residue = src
+    .replace(emojiRe, "")
+    .replace(joinerRe, "")
+    .replace(keycapRe, "")
+    .replace(shortcodeRe, " ")
+    .replace(emoticonTokenRe, " ")
+    .replace(slashIconTokenRe, " ")
+    .replace(/[\p{P}\p{S}\s]/gu, "")
+    .trim();
+  return residue.length === 0;
 }
 
 export function detectSpam(msg, config, adminIds = []) {
@@ -127,7 +171,26 @@ export function detectSpam(msg, config, adminIds = []) {
   const log = (m) => console.log(`[${new Date().toISOString()}] [spam] ${m}`);
   log(`CHECK sender=${senderId} type=${msgType} content=${JSON.stringify(safeContent)}`);
 
-  if (adminIds.includes(senderId)) return null;
+  // Luôn cập nhật streak liền kề theo timeline nhóm (kể cả admin) để đảm bảo
+  // chỉ đúng khi thực sự "liền nhau", không ai xen giữa.
+  const gid = String(groupId || "").trim();
+  const sid = String(senderId || "").trim();
+  let groupStreak = groupConsecutiveMap.get(gid);
+  if (!groupStreak) groupStreak = { senderId: "", content: "", count: 0 };
+  if (groupStreak.senderId === sid && groupStreak.content === safeContent) {
+    groupStreak.count += 1;
+  } else {
+    groupStreak.senderId = sid;
+    groupStreak.content = safeContent;
+    groupStreak.count = 1;
+  }
+  groupConsecutiveMap.set(gid, groupStreak);
+
+  /** UID so khớp kiểu string/number; danh sách lấy từ DB/config — không đồng bộ khi Zalo gỡ admin */
+  const adminSet = new Set(
+    (adminIds || []).map((id) => String(id ?? "").trim()).filter(Boolean)
+  );
+  if (adminSet.has(sid)) return null;
 
   const eff = getEffectiveSpamConfig(config);
   const spam = eff.spam;
@@ -162,26 +225,53 @@ export function detectSpam(msg, config, adminIds = []) {
     return { type: "STICKER", detail: "Sticker message", content: "[sticker]" };
   }
 
-  // 3. Emoji only
-  if (spam.blockEmojiOnly && isEmojiOnly(emojiProbe)) {
-    return { type: "EMOJI_ONLY", detail: "Emoji only message", content: safeContent };
+  // 3. Emoji spam
+  const emojiMode = String(spam.emojiMode || "strict").toLowerCase() === "balanced"
+    ? "balanced"
+    : "strict";
+  if (spam.blockEmojiOnly && isEmojiOnly(emojiProbe, emojiMode)) {
+    return {
+      type: "SPAM_Emoji",
+      detail: `Emoji-only message (${emojiMode})`,
+      content: safeContent,
+    };
   }
 
-  // 4. Repeat
-  const key = `${senderId}_${groupId}`;
-  const now = Date.now();
-  const window = spam.repeatWindowSeconds * 1000;
+  // 4. REPEAT:
+  // - 5 lần trong 20 giây (config)
+  // - HOẶC 3 tin liền nhau theo timeline nhóm (config)
+  let need = Number(spam.repeatThreshold);
+  if (!Number.isFinite(need) || need < 1) need = 3;
+  need = Math.max(2, need);
+  let winSec = Number(spam.repeatWindowSeconds);
+  if (!Number.isFinite(winSec) || winSec < 1) winSec = 20;
+  winSec = Math.max(1, winSec);
+  let needConsecutive = Number(spam.repeatConsecutiveThreshold);
+  if (!Number.isFinite(needConsecutive) || needConsecutive < 1) needConsecutive = 3;
+  needConsecutive = Math.max(2, needConsecutive);
 
-  if (!recentMessages.has(key)) recentMessages.set(key, []);
-  const history = recentMessages.get(key).filter((m) => now - m.ts < window);
-  history.push({ content: safeContent, ts: now });
-  recentMessages.set(key, history);
+  const now = Number(msg.data?.ts || msg.ts || Date.now());
+  const contentKey = `${sid}_${gid}_${safeContent}`;
+  const cutoff = now - winSec * 1000;
+  const arr = repeatWindowMap.get(contentKey) || [];
+  const kept = arr.filter((t) => Number(t) >= cutoff);
+  kept.push(now);
+  repeatWindowMap.set(contentKey, kept);
 
-  const sameCount = history.filter((m) => m.content === safeContent).length;
-  if (sameCount >= spam.repeatThreshold) {
+  if (kept.length >= need) {
+    repeatWindowMap.set(contentKey, []);
     return {
       type: "REPEAT",
-      detail: `Repeated ${sameCount}x in ${spam.repeatWindowSeconds}s`,
+      detail: `${need} tin giống hệt trong ${winSec}s`,
+      content: safeContent,
+    };
+  }
+
+  if (groupStreak.senderId === sid && groupStreak.content === safeContent && groupStreak.count >= needConsecutive) {
+    groupConsecutiveMap.set(gid, { senderId: "", content: "", count: 0 });
+    return {
+      type: "REPEAT",
+      detail: `${needConsecutive} tin giống hệt liền nhau (không ai xen giữa)`,
       content: safeContent,
     };
   }

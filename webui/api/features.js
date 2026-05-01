@@ -9,6 +9,18 @@ import { isBotGroupAdmin } from "../../core/groupDiscovery.js";
 
 export const featuresRouter = Router();
 export const groupsRouter = Router();
+const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+
+function readViolationRules(groupId) {
+  const rows = db
+    .prepare(
+      "SELECT type, enabled FROM group_violation_rules WHERE group_id = ?"
+    )
+    .all(groupId);
+  const out = Object.fromEntries(VIOLATION_TYPES.map((t) => [t, true]));
+  for (const r of rows) out[String(r.type)] = Number(r.enabled) === 1;
+  return out;
+}
 
 featuresRouter.get("/", (_req, res) => {
   res.json({ ok: true, flags: getAllFlags() });
@@ -26,12 +38,16 @@ featuresRouter.post("/", (req, res) => {
 
 /** GET /api/groups/ — danh sách watch_groups */
 groupsRouter.get("/", (_req, res) => {
-  const items = db
+  const rows = db
     .prepare(
       `SELECT group_id, name, enabled, alert_group_id, admin_ids
        FROM watch_groups ORDER BY name COLLATE NOCASE`
     )
     .all();
+  const items = rows.map((g) => ({
+    ...g,
+    violation_rules: readViolationRules(g.group_id),
+  }));
   res.json({ ok: true, items });
 });
 
@@ -107,6 +123,65 @@ groupsRouter.post("/bulk/disable-shield", (_req, res) => {
     ok: true,
     updated: typeof r.changes === "number" ? r.changes : 0,
   });
+});
+
+/** PATCH /api/groups/:groupId/admins — cập nhật admin_ids (miễn kiểm spam), JSON array text trong DB */
+groupsRouter.patch("/:groupId/admins", (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  const { adminIds } = req.body || {};
+  if (!groupId) {
+    return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  }
+  if (!Array.isArray(adminIds)) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "body.adminIds phải là mảng string (UID)" });
+  }
+  const normalized = adminIds
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+  const json = JSON.stringify(normalized);
+  const info = db
+    .prepare("UPDATE watch_groups SET admin_ids = ? WHERE group_id = ?")
+    .run(json, groupId);
+  if (info.changes === 0) {
+    return res.status(404).json({ ok: false, error: "Không tìm thấy nhóm" });
+  }
+  eventBus.emit("guardian:db:changed");
+  res.json({ ok: true, group_id: groupId, admin_ids: normalized });
+});
+
+/** PATCH /api/groups/:groupId/rules — bật/tắt từng loại vi phạm theo room */
+groupsRouter.patch("/:groupId/rules", (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  const { rules } = req.body || {};
+  if (!groupId) {
+    return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  }
+  if (!rules || typeof rules !== "object") {
+    return res
+      .status(400)
+      .json({ ok: false, error: "body.rules phải là object {TYPE:boolean}" });
+  }
+  const exists = db
+    .prepare("SELECT 1 FROM watch_groups WHERE group_id = ?")
+    .get(groupId);
+  if (!exists) {
+    return res.status(404).json({ ok: false, error: "Không tìm thấy nhóm" });
+  }
+  const up = db.prepare(`
+    INSERT INTO group_violation_rules (group_id, type, enabled, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(group_id, type) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  for (const t of VIOLATION_TYPES) {
+    if (rules[t] === undefined) continue;
+    up.run(groupId, t, rules[t] ? 1 : 0);
+  }
+  eventBus.emit("guardian:db:changed");
+  res.json({ ok: true, group_id: groupId, rules: readViolationRules(groupId) });
 });
 
 /** POST /api/groups/leave/:groupId — rời nhóm Zalo + xóa khỏi watch_groups */
