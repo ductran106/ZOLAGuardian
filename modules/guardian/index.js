@@ -33,6 +33,27 @@ const VIOLATION_TYPES = [
   "MESSAGE_DELETED_BY_ADMIN",
 ];
 
+function todayDateStrGMT7() {
+  const d = new Date(Date.now() + 7 * 3600000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** Đếm thu hồi/xóa tin của người thao tác trong nhóm, theo ngày lịch GMT+7 (sau khi đã ghi violations). */
+function countActorUndoViolationsToday(actorId, groupId) {
+  const today = todayDateStrGMT7();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM violations
+       WHERE user_id = ?
+         AND group_id = ?
+         AND type IN ('MESSAGE_RECALLED_SELF', 'MESSAGE_DELETED_BY_ADMIN')
+         AND strftime('%Y-%m-%d', ts, '+7 hours') = ?`
+    )
+    .get(String(actorId || ""), String(groupId || ""), today);
+  return Number(row?.c ?? 0);
+}
+
 function isViolationRuleEnabled(groupId, type) {
   const t = String(type || "");
   const alias = {
@@ -220,6 +241,11 @@ export function startGuardian(config) {
       undoInfo.cachedContent || ""
     );
 
+    const undoCountToday = countActorUndoViolationsToday(
+      actorId,
+      undoInfo.groupId
+    );
+
     const groupNameRow = db
       .prepare("SELECT name FROM group_names WHERE group_id = ?")
       .get(undoInfo.groupId);
@@ -238,6 +264,7 @@ export function startGuardian(config) {
       originalSenderId,
       recalledContent: undoInfo.cachedContent,
       timeLabel: timeLabelUndo,
+      undoCountToday,
     });
     await sendTelegramEvidence(config, {
       plainText: plainUndo,
@@ -252,7 +279,8 @@ export function startGuardian(config) {
       originalDisplayName,
       originalSenderId,
       undoInfo.cachedContent,
-      undoType
+      undoType,
+      undoCountToday
     );
 
     if (config.dmAdminId && config.dmAdminId !== "ADMIN_USER_ID_HERE") {
@@ -266,7 +294,8 @@ export function startGuardian(config) {
           originalDisplayName,
           originalSenderId,
           undoInfo.cachedContent,
-          undoType
+          undoType,
+          undoCountToday
         )
       );
     }

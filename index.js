@@ -17,6 +17,10 @@ const { startGuardian } = await import("./modules/guardian/index.js");
 startGuardian(config);
 log("Guardian started.");
 
+const { startScheduler } = await import("./modules/scheduler/index.js");
+startScheduler();
+log("Scheduler started.");
+
 const { startWebUI } = await import("./webui/server.js");
 startWebUI(config);
 log("WebUI started.");

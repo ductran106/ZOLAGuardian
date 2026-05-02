@@ -65,12 +65,17 @@ export function formatUndoEvidencePlain(ctx) {
     ? `${ctx.originalDisplayName} (${ctx.originalSenderId})`
     : String(ctx.originalSenderId || "[không rõ]");
   const content = clip(String(ctx.recalledContent ?? ""), 3800);
+  const dailyLine =
+    ctx.undoCountToday != null && ctx.undoCountToday >= 0
+      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${ctx.undoCountToday} lần\n`
+      : "";
   return (
     `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
     `Loại: ${presentType(ctx.type)}\n` +
     `Người thao tác: ${actorLine}\n` +
     `Tác giả tin gốc: ${originalLine}\n` +
+    dailyLine +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${ctx.timeLabel}`
   );

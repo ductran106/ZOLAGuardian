@@ -61,15 +61,18 @@ export async function startZalo(config) {
             : String(cacheContent || "");
         db.prepare(`
           INSERT OR IGNORE INTO messages
-            (msg_id, group_id, user_id, display_name, content, ts)
-          VALUES (?, ?, ?, ?, ?, ?)
+            (msg_id, group_id, user_id, display_name, content, ts,
+             quote_msg_id, quote_owner_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           cacheMsgId,
           msgGroupId || "",
           cacheSender || "",
           msg.data?.dName || msg.dName || "",
           contentStr,
-          cacheTs || Date.now()
+          cacheTs || Date.now(),
+          String(msg.data?.quote?.globalMsgId || "") || null,
+          String(msg.data?.quote?.ownerId || "") || null
         );
       } catch {
         /* ignore */

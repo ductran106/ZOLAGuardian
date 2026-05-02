@@ -25,7 +25,9 @@ db.exec(`
     content      TEXT,
     msg_type     TEXT DEFAULT 'text',
     ts           INTEGER,
-    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    quote_msg_id   TEXT,
+    quote_owner_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS violations (
@@ -76,6 +78,73 @@ db.exec(`
     PRIMARY KEY (group_id, type)
   );
 `);
+
+// Migrate: thêm cột quote nếu chưa có
+try {
+  db.prepare("ALTER TABLE messages ADD COLUMN quote_msg_id TEXT").run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE messages ADD COLUMN quote_owner_id TEXT").run();
+} catch {}
+
+try {
+  db.prepare(`CREATE TABLE IF NOT EXISTS jobs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    msg_id          TEXT UNIQUE,
+    group_id        TEXT,
+    poster_id       TEXT,
+    poster_name     TEXT,
+    taker_id        TEXT,
+    taker_name      TEXT,
+    taker_msg_id    TEXT,
+    confirm_msg_id  TEXT,
+    cancel_msg_id   TEXT,
+    raw_content     TEXT,
+    price           INTEGER,
+    trip_type       TEXT,
+    base_points     REAL,
+    status          TEXT DEFAULT 'OPEN',
+    job_date        TEXT,
+    ts              INTEGER,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    points_source   TEXT DEFAULT 'BAREM',
+    override_points REAL,
+    override_by     TEXT,
+    override_note   TEXT
+  )`).run();
+} catch (e) {}
+
+try {
+  db.prepare(
+    "ALTER TABLE jobs ADD COLUMN points_source TEXT DEFAULT 'BAREM'"
+  ).run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE jobs ADD COLUMN override_points REAL").run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE jobs ADD COLUMN override_by TEXT").run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE jobs ADD COLUMN override_note TEXT").run();
+} catch {}
+
+try {
+  db.prepare(`CREATE TABLE IF NOT EXISTS daily_scores (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT,
+    display_name    TEXT,
+    group_id        TEXT,
+    date            TEXT,
+    jobs_posted     INTEGER DEFAULT 0,
+    jobs_taken      INTEGER DEFAULT 0,
+    points_earned   REAL DEFAULT 0,
+    points_deducted REAL DEFAULT 0,
+    net_points      REAL DEFAULT 0,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, group_id, date)
+  )`).run();
+} catch (e) {}
 
 // Seed default feature flags nếu chưa có
 const seedFeature = db.prepare(

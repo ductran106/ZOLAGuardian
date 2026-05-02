@@ -142,7 +142,8 @@ async function loadStatus() {
 }
 
 let cachedGroupItems = [];
-let showEnabledOnlyGroups = false;
+/** Mặc định true: chỉ hiện nhóm Shield bật — UI gọn; bấm nút để xem tất cả. */
+let showEnabledOnlyGroups = true;
 const VIOLATION_TYPES = [
   "URL_BLACKLIST",
   "KEYWORD_SPAM",
@@ -178,6 +179,40 @@ function renderLookupGroupOptions() {
   if (!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">Tất cả nhóm</option>';
+  const items = sortGroupsGuardianFirst(cachedGroupItems);
+  for (const g of items) {
+    const op = document.createElement("option");
+    op.value = String(g.group_id || "");
+    op.textContent = `${String(g.name || "(Không tên)")} (${String(g.group_id || "")})`;
+    sel.appendChild(op);
+  }
+  if ([...sel.options].some((o) => o.value === current)) {
+    sel.value = current;
+  }
+}
+
+function renderScoreGroupOptions() {
+  const sel = document.getElementById("score-group");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Tất cả group</option>';
+  const items = sortGroupsGuardianFirst(cachedGroupItems);
+  for (const g of items) {
+    const op = document.createElement("option");
+    op.value = String(g.group_id || "");
+    op.textContent = `${String(g.name || "(Không tên)")} (${String(g.group_id || "")})`;
+    sel.appendChild(op);
+  }
+  if ([...sel.options].some((o) => o.value === current)) {
+    sel.value = current;
+  }
+}
+
+function renderExportDocxGroupOptions() {
+  const sel = document.getElementById("export-docx-group");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— Chọn nhóm —</option>';
   const items = sortGroupsGuardianFirst(cachedGroupItems);
   for (const g of items) {
     const op = document.createElement("option");
@@ -267,8 +302,18 @@ function renderGroupCards(items) {
     return;
   }
   if (items.length === 0) {
-    root.innerHTML =
-      '<div class="empty">Không có nhóm khớp ô tìm kiếm.</div>';
+    const qs = String(document.getElementById("group-search")?.value ?? "").trim();
+    let msg =
+      "Không có nhóm khớp ô tìm kiếm.";
+    if (
+      !qs &&
+      showEnabledOnlyGroups &&
+      cachedGroupItems.some((g) => Number(g.enabled) !== 1)
+    ) {
+      msg =
+        'Đang ẩn nhóm tắt Shield. Bấm <strong>Hiện tất cả nhóm</strong> để xem đầy đủ.';
+    }
+    root.innerHTML = `<div class="empty">${msg}</div>`;
     return;
   }
   for (const g of items) {
@@ -414,6 +459,8 @@ async function loadGroups() {
     const j = await fetchJSON("/api/groups/");
     cachedGroupItems = j.items || [];
     renderLookupGroupOptions();
+    renderScoreGroupOptions();
+    renderExportDocxGroupOptions();
     applyGroupFilter();
   } catch (e) {
     cachedGroupItems = [];
@@ -831,3 +878,167 @@ function connectWS() {
 loadAll();
 connectWS();
 setInterval(loadAll, 20000);
+
+// ── Tab navigation (Phase 2: scores / jobs) ─────────────────────────────
+function showTab(name) {
+  document.querySelectorAll(".tab-content").forEach((el) => {
+    el.style.display = "none";
+  });
+  const el = document.getElementById("tab-" + name);
+  if (el) el.style.display = "block";
+  document.querySelectorAll(".tab-nav .tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === name);
+  });
+}
+
+async function loadScores() {
+  const date = document.getElementById("score-date")?.value || "";
+  const group = document.getElementById("score-group")?.value || "";
+  let url = "/api/scores?";
+  if (date) url += "date=" + encodeURIComponent(date) + "&";
+  if (group) url += "group_id=" + encodeURIComponent(group);
+  const res = await fetch(url, { credentials: "same-origin" });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.ok === false) {
+    toast(j.error || `Lỗi ${res.status}`, true);
+    return;
+  }
+  const data = Array.isArray(j.data) ? j.data : [];
+  const tbody = document.getElementById("scores-body");
+  if (!tbody) return;
+  if (data.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="7" class="empty muted">Không có dữ liệu cho ngày / bộ lọc này.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data
+    .map(
+      (r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(String(r.display_name ?? ""))}</td>
+      <td>${escapeHtml(String(r.jobs_posted ?? ""))}</td>
+      <td>${escapeHtml(String(r.jobs_taken ?? ""))}</td>
+      <td style="color:var(--ok)">+${escapeHtml(String(r.points_earned ?? ""))}</td>
+      <td style="color:var(--danger)">-${escapeHtml(String(r.points_deducted ?? ""))}</td>
+      <td style="font-weight:600">${escapeHtml(String(r.net_points ?? ""))}</td>
+    </tr>
+  `
+    )
+    .join("");
+}
+
+function exportScores() {
+  const date = document.getElementById("score-date")?.value || "";
+  const group = document.getElementById("score-group")?.value || "";
+  let url = "/api/export/scores?";
+  if (date) url += "date=" + encodeURIComponent(date) + "&";
+  if (group) url += "group_id=" + encodeURIComponent(group);
+  window.location.href = url;
+}
+
+async function loadJobs() {
+  const date = document.getElementById("job-date")?.value || "";
+  const status = document.getElementById("job-status")?.value || "";
+  let url = "/api/jobs?";
+  if (date) url += "date=" + encodeURIComponent(date) + "&";
+  if (status) url += "status=" + encodeURIComponent(status);
+  const res = await fetch(url, { credentials: "same-origin" });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.ok === false) {
+    toast(j.error || `Lỗi ${res.status}`, true);
+    return;
+  }
+  const data = Array.isArray(j.data) ? j.data : [];
+  const tbody = document.getElementById("jobs-body");
+  if (!tbody) return;
+  if (data.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="8" class="empty muted">Không có lịch cho ngày / trạng thái này.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data
+    .map((r) => {
+      const pts = r.override_points != null ? r.override_points : r.base_points;
+      const src =
+        r.override_points != null ? "✏️ OVERRIDE" : r.points_source;
+      const st = String(r.status || "").toLowerCase();
+      const badgeClass =
+        r.override_points != null
+          ? "badge-override"
+          : r.points_source === "EXPLICIT"
+            ? "badge-green"
+            : "badge-gray";
+      return `
+      <tr>
+        <td>${escapeHtml(String(r.poster_name ?? ""))}</td>
+        <td>${escapeHtml(String(r.taker_name || "-"))}</td>
+        <td>${escapeHtml(String(r.price ?? ""))}k</td>
+        <td>${escapeHtml(String(r.trip_type ?? ""))}</td>
+        <td>${escapeHtml(String(pts ?? ""))}đ</td>
+        <td><span class="${badgeClass}">${escapeHtml(String(src ?? ""))}</span></td>
+        <td><span class="job-status job-status-${st}">${escapeHtml(String(r.status ?? ""))}</span></td>
+        <td class="job-override-cell">
+          <input type="number" step="0.25" min="0" max="10"
+            id="override-${r.id}" value="${escapeHtml(String(pts ?? ""))}" class="override-inp" />
+          <input type="text" placeholder="ghi chú"
+            id="note-${r.id}" class="override-note" />
+          <button type="button" class="btn-mini primary" onclick="overrideJob(${r.id})">✓</button>
+        </td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+async function overrideJob(id) {
+  const pi = document.getElementById("override-" + id);
+  const ni = document.getElementById("note-" + id);
+  const points = pi?.value;
+  const note = ni?.value ?? "";
+  const res = await fetch("/api/jobs/" + id + "/override", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ points: parseFloat(points), note }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data.ok) {
+    toast("Đã lưu override điểm.");
+    await loadJobs();
+  } else {
+    toast(data.error || "Lỗi override", true);
+  }
+}
+
+function exportQuoteDocx() {
+  const date = document.getElementById("export-docx-date")?.value || "";
+  const timeStart = document.getElementById("export-docx-start")?.value || "";
+  const timeEnd = document.getElementById("export-docx-end")?.value || "";
+  const groupId = document.getElementById("export-docx-group")?.value || "";
+  if (!date) {
+    toast("Chọn ngày xuất.", true);
+    return;
+  }
+  if (!groupId) {
+    toast("Chọn nhóm.", true);
+    return;
+  }
+  const norm = (t) => (t && t.length === 5 ? `${t}:00` : t);
+  let url = "/api/export/quote-docx?";
+  url += `date=${encodeURIComponent(date)}&`;
+  url += `time_start=${encodeURIComponent(norm(timeStart) || "00:00:00")}&`;
+  url += `time_end=${encodeURIComponent(norm(timeEnd) || "23:59:59")}&`;
+  url += `group_id=${encodeURIComponent(groupId)}`;
+  window.location.href = url;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const sd = document.getElementById("score-date");
+  const jd = document.getElementById("job-date");
+  const ed = document.getElementById("export-docx-date");
+  if (sd) sd.value = today;
+  if (jd) jd.value = today;
+  if (ed) ed.value = today;
+});

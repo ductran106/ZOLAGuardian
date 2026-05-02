@@ -835,3 +835,164 @@ input.switch[type="checkbox"]:disabled {
   font-size: 0.88rem;
   padding: 0.75rem 0;
 }
+
+/* Phase 2: Bảng điểm + Lịch xe */
+.tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.tab-nav .tab-btn.active {
+  border-color: var(--accent);
+  color: #e8ebf4;
+  background: rgba(76, 110, 245, 0.12);
+}
+
+.tab-content {
+  margin-top: 1.1rem;
+}
+
+.score-job-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .score-job-head {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.score-job-head h2 {
+  margin: 0;
+}
+
+.score-job-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.score-job-controls input[type="date"],
+.score-job-controls select {
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0e101a;
+  color: #eaeaf0;
+}
+
+.badge-green,
+.badge-gray,
+.badge-override {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.badge-green {
+  color: var(--ok);
+  border-color: rgba(47, 158, 68, 0.45);
+  background: rgba(47, 158, 68, 0.1);
+}
+
+.badge-gray {
+  color: var(--muted);
+  background: #0e101a;
+}
+
+.badge-override {
+  color: #fab005;
+  border-color: rgba(250, 176, 5, 0.4);
+  background: rgba(250, 176, 5, 0.1);
+}
+
+.job-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.job-status-open {
+  color: #4dabf7;
+}
+.job-status-matched {
+  color: #fab005;
+}
+.job-status-confirmed {
+  color: var(--ok);
+}
+.job-status-cancelled {
+  color: var(--danger);
+}
+
+.jobs-table-wrap {
+  overflow-x: auto;
+}
+
+.job-override-cell {
+  white-space: nowrap;
+}
+
+.job-override-cell .override-inp {
+  width: 4.2rem;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0e101a;
+  color: #eaeaf0;
+}
+
+.job-override-cell .override-note {
+  width: 6.5rem;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0e101a;
+  color: #eaeaf0;
+}
+
+.docx-hint {
+  margin-top: 0.25rem;
+  max-width: 42rem;
+}
+
+.docx-controls {
+  align-items: flex-end;
+}
+
+.docx-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.docx-label input {
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0e101a;
+  color: #eaeaf0;
+}

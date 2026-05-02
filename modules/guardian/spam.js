@@ -154,6 +154,15 @@ function isEmojiOnly(text, mode = "strict") {
   return residue.length === 0;
 }
 
+/**
+ * Tin có biến thể chữ ok (ok, Ok, 0k, ook...) — không áp dụng REPEAT_SPAM (theo yêu cầu vận hành).
+ * Cùng ý tưởng ranh giới từ với notifier UNDO (tránh khớp nhầm trong từ dài).
+ */
+function contentExemptFromRepeatSpam(text) {
+  const raw = String(text ?? "").normalize("NFKC");
+  return /(^|[^a-z0-9])(?:[oO0]+[kK]+)+(?:[^a-z0-9]|$)/.test(raw);
+}
+
 export function detectSpam(msg, config, adminIds = []) {
   const senderId = msg.data?.uidFrom || msg.uidFrom || "";
   const groupId  = msg.data?.idTo    || msg.idTo    || "";
@@ -165,6 +174,8 @@ export function detectSpam(msg, config, adminIds = []) {
       ? JSON.stringify(content)
       : String(content || "");
 
+  const repeatExemptOk = contentExemptFromRepeatSpam(safeContent);
+
   const linkHaystack = buildLinkHaystack(content, safeContent);
   const emojiProbe = buildEmojiProbe(content, safeContent);
 
@@ -173,11 +184,14 @@ export function detectSpam(msg, config, adminIds = []) {
 
   // Luôn cập nhật streak liền kề theo timeline nhóm (kể cả admin) để đảm bảo
   // chỉ đúng khi thực sự "liền nhau", không ai xen giữa.
+  // Tin chứa ok/0k… không tính vào lặp — reset streak để không chuỗi liền qua tin đó.
   const gid = String(groupId || "").trim();
   const sid = String(senderId || "").trim();
   let groupStreak = groupConsecutiveMap.get(gid);
   if (!groupStreak) groupStreak = { senderId: "", content: "", count: 0 };
-  if (groupStreak.senderId === sid && groupStreak.content === safeContent) {
+  if (repeatExemptOk) {
+    groupStreak = { senderId: "", content: "", count: 0 };
+  } else if (groupStreak.senderId === sid && groupStreak.content === safeContent) {
     groupStreak.count += 1;
   } else {
     groupStreak.senderId = sid;
@@ -270,40 +284,47 @@ export function detectSpam(msg, config, adminIds = []) {
   // 5. REPEAT:
   // - 5 lần trong 20 giây (config)
   // - HOẶC 3 tin liền nhau theo timeline nhóm (config)
-  let need = Number(spam.repeatThreshold);
-  if (!Number.isFinite(need) || need < 1) need = 3;
-  need = Math.max(2, need);
-  let winSec = Number(spam.repeatWindowSeconds);
-  if (!Number.isFinite(winSec) || winSec < 1) winSec = 20;
-  winSec = Math.max(1, winSec);
-  let needConsecutive = Number(spam.repeatConsecutiveThreshold);
-  if (!Number.isFinite(needConsecutive) || needConsecutive < 1) needConsecutive = 3;
-  needConsecutive = Math.max(2, needConsecutive);
+  // Tin chứa ok/0k/…: không đếm cửa sổ / không vi phạm lặp (các rule khác vẫn áp dụng).
+  if (!repeatExemptOk) {
+    let need = Number(spam.repeatThreshold);
+    if (!Number.isFinite(need) || need < 1) need = 3;
+    need = Math.max(2, need);
+    let winSec = Number(spam.repeatWindowSeconds);
+    if (!Number.isFinite(winSec) || winSec < 1) winSec = 20;
+    winSec = Math.max(1, winSec);
+    let needConsecutive = Number(spam.repeatConsecutiveThreshold);
+    if (!Number.isFinite(needConsecutive) || needConsecutive < 1) needConsecutive = 3;
+    needConsecutive = Math.max(2, needConsecutive);
 
-  const now = Number(msg.data?.ts || msg.ts || Date.now());
-  const contentKey = `${sid}_${gid}_${safeContent}`;
-  const cutoff = now - winSec * 1000;
-  const arr = repeatWindowMap.get(contentKey) || [];
-  const kept = arr.filter((t) => Number(t) >= cutoff);
-  kept.push(now);
-  repeatWindowMap.set(contentKey, kept);
+    const now = Number(msg.data?.ts || msg.ts || Date.now());
+    const contentKey = `${sid}_${gid}_${safeContent}`;
+    const cutoff = now - winSec * 1000;
+    const arr = repeatWindowMap.get(contentKey) || [];
+    const kept = arr.filter((t) => Number(t) >= cutoff);
+    kept.push(now);
+    repeatWindowMap.set(contentKey, kept);
 
-  if (kept.length >= need) {
-    repeatWindowMap.set(contentKey, []);
-    return {
-      type: "REPEAT_SPAM",
-      detail: `${need} tin giống hệt trong ${winSec}s`,
-      content: safeContent,
-    };
-  }
+    if (kept.length >= need) {
+      repeatWindowMap.set(contentKey, []);
+      return {
+        type: "REPEAT_SPAM",
+        detail: `${need} tin giống hệt trong ${winSec}s`,
+        content: safeContent,
+      };
+    }
 
-  if (groupStreak.senderId === sid && groupStreak.content === safeContent && groupStreak.count >= needConsecutive) {
-    groupConsecutiveMap.set(gid, { senderId: "", content: "", count: 0 });
-    return {
-      type: "REPEAT_SPAM",
-      detail: `${needConsecutive} tin giống hệt liền nhau (không ai xen giữa)`,
-      content: safeContent,
-    };
+    if (
+      groupStreak.senderId === sid &&
+      groupStreak.content === safeContent &&
+      groupStreak.count >= needConsecutive
+    ) {
+      groupConsecutiveMap.set(gid, { senderId: "", content: "", count: 0 });
+      return {
+        type: "REPEAT_SPAM",
+        detail: `${needConsecutive} tin giống hệt liền nhau (không ai xen giữa)`,
+        content: safeContent,
+      };
+    }
   }
 
   return null;

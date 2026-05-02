@@ -165,7 +165,8 @@ export function buildUndoDM(
   originalDisplayName,
   originalSenderId,
   content,
-  undoType = "MESSAGE_RECALLED_SELF"
+  undoType = "MESSAGE_RECALLED_SELF",
+  undoCountToday
 ) {
   const time =
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
@@ -175,12 +176,17 @@ export function buildUndoDM(
   const originalLine = originalDisplayName
     ? `${originalDisplayName} (${originalSenderId})`
     : String(originalSenderId || "[không rõ]");
+  const dailyLine =
+    undoCountToday != null && undoCountToday >= 0
+      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${undoCountToday} lần\n`
+      : "";
   return (
     `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
     `Loại: ${presentType(undoType)}\n` +
     `Người thao tác: ${actorLine}\n` +
     `Tác giả tin gốc: ${originalLine}\n` +
+    dailyLine +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${time}`
   );
@@ -195,7 +201,8 @@ export async function sendUndoNotice(
   originalDisplayName,
   originalSenderId,
   content,
-  undoType = "MESSAGE_RECALLED_SELF"
+  undoType = "MESSAGE_RECALLED_SELF",
+  undoCountToday
 ) {
   const raw = String(content ?? "");
   const hasOkVariant = /(^|[^a-z0-9])(?:[o0]+k+)+(?:[^a-z0-9]|$)/i.test(
@@ -204,27 +211,30 @@ export async function sendUndoNotice(
   const time =
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
     " (GMT+7)";
-  const groupLine = `${groupName || groupId} (${groupId})`;
-  const actorLine = actorDisplayName
-    ? `${actorDisplayName} (${actorId})`
-    : String(actorId || "");
-  const originalLine = originalDisplayName
-    ? `${originalDisplayName} (${originalSenderId})`
-    : String(originalSenderId || "[không rõ]");
+  const groupLine = (groupName && String(groupName).trim()) || "Nhóm";
+  const actorLine = (actorDisplayName && String(actorDisplayName).trim()) || "[không rõ]";
+  const originalLine =
+    (originalDisplayName && String(originalDisplayName).trim()) || "[không rõ]";
+  const dailyLine =
+    undoCountToday != null && undoCountToday >= 0
+      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${undoCountToday} lần\n`
+      : "";
   const fullText =
-    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
+    `📸 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
     `Loại: ${presentType(undoType)}\n` +
     `Người thao tác: ${actorLine}\n` +
     `Tác giả tin gốc: ${originalLine}\n` +
+    dailyLine +
     `Nội dung đã thu hồi: "${raw}"\n` +
     `Thời gian: ${time}`;
   const shortText =
-    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
+    `📸 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
     `Loại: ${presentType(undoType)}\n` +
     `Người thao tác: ${actorLine}\n` +
     `Tác giả tin gốc: ${originalLine}\n` +
+    dailyLine +
     `Thời gian: ${time}`;
   const text = hasOkVariant ? fullText : shortText;
   try {

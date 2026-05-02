@@ -11,6 +11,9 @@ import { statusRouter } from "./api/status.js";
 import { violationsRouter } from "./api/violations.js";
 import { featuresRouter, groupsRouter } from "./api/features.js";
 import { spamRoutesRouter } from "./api/spamRoutes.js";
+import scoresRouter from "./api/scores.js";
+import jobsRouter from "./api/jobs.js";
+import exportRouter from "./api/export.js";
 import {
   isWebUiAuthConfigured,
   verifyBasicAuth,
@@ -29,6 +32,9 @@ export function startWebUI(config) {
   app.use("/api/features", featuresRouter);
   app.use("/api/groups", groupsRouter);
   app.use("/api/spam-rules", spamRoutesRouter);
+  app.use("/api/scores", scoresRouter);
+  app.use("/api/jobs", jobsRouter);
+  app.use("/api/export", exportRouter);
   app.use(express.static(path.join(__dirname, "public")));
 
   const server = createServer(app);

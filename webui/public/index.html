@@ -15,6 +15,11 @@
     <span class="pill" id="ws-pill" title="Đồng bộ realtime">…</span>
   </header>
 
+  <nav class="tab-nav" aria-label="Bảng điểm và lịch xe">
+    <button type="button" class="tab-btn btn secondary" data-tab="scores" onclick="showTab('scores')">📊 Bảng điểm</button>
+    <button type="button" class="tab-btn btn secondary" data-tab="jobs" onclick="showTab('jobs')">🚗 Lịch xe</button>
+  </nav>
+
   <main>
     <section class="panel" aria-label="Trạng thái">
       <h2>Tổng quan</h2>
@@ -23,6 +28,25 @@
         <summary>Feature flags (nâng cao)</summary>
         <div id="flags-list" class="flags-chips"></div>
       </details>
+    </section>
+
+    <section class="panel panel-docx-export" aria-label="Xuất DOCX cụm quote">
+      <div class="section-header score-job-head">
+        <h2>📄 Xuất DOCX (cụm quote + admin @All)</h2>
+        <p class="hint docx-hint">
+          Khung giờ theo <strong>Asia/Ho_Chi_Minh</strong>. Định dạng dòng tương thích
+          <code>vibecode-docx-processor</code>. Tin cha ngoài khung có <code>*Missing*</code> trong nội dung.
+        </p>
+        <div class="controls score-job-controls docx-controls">
+          <label class="docx-label">Ngày <input type="date" id="export-docx-date" /></label>
+          <label class="docx-label">Từ <input type="time" id="export-docx-start" step="60" value="00:00" /></label>
+          <label class="docx-label">Đến <input type="time" id="export-docx-end" step="60" value="23:59" /></label>
+          <select id="export-docx-group" aria-label="Nhóm">
+            <option value="">— Chọn nhóm —</option>
+          </select>
+          <button type="button" class="btn primary" onclick="exportQuoteDocx()">⬇️ Tải DOCX</button>
+        </div>
+      </div>
     </section>
 
     <section class="panel" aria-label="Nhóm">
@@ -46,7 +70,7 @@
             Đồng bộ nhóm (bot là Admin)
           </button>
           <button type="button" id="toggle-enabled-only-groups" class="btn secondary">
-            Ẩn nhóm tắt Shield
+            Hiện tất cả nhóm
           </button>
           <button type="button" id="disable-all-groups" class="btn secondary warn">
             Tắt Guardian — tất cả nhóm
@@ -188,6 +212,71 @@
       <p class="hint">Gom theo nhóm — bấm tiêu đề nhóm để xem / ẩn chi tiết.</p>
       <div id="viol-groups" class="viol-groups"></div>
     </section>
+
+    <div id="tab-scores" class="tab-content panel" style="display:none" aria-label="Bảng điểm ngày">
+      <div class="section-header score-job-head">
+        <h2>📊 Bảng điểm</h2>
+        <div class="controls score-job-controls">
+          <input type="date" id="score-date" />
+          <select id="score-group">
+            <option value="">Tất cả group</option>
+          </select>
+          <button type="button" class="btn primary" onclick="loadScores()">🔍 Xem</button>
+          <button type="button" class="btn secondary" onclick="exportScores()">⬇️ Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="vio-table" id="scores-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tên</th>
+              <th>Lịch đăng</th>
+              <th>Lịch nhận</th>
+              <th>Điểm cộng</th>
+              <th>Điểm trừ</th>
+              <th>Điểm net</th>
+            </tr>
+          </thead>
+          <tbody id="scores-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-jobs" class="tab-content panel" style="display:none" aria-label="Lịch xe">
+      <div class="section-header score-job-head">
+        <h2>🚗 Lịch xe</h2>
+        <div class="controls score-job-controls">
+          <input type="date" id="job-date" />
+          <select id="job-status">
+            <option value="">Tất cả</option>
+            <option value="OPEN">OPEN</option>
+            <option value="MATCHED">MATCHED</option>
+            <option value="CONFIRMED">CONFIRMED</option>
+            <option value="CANCELLED">CANCELLED</option>
+          </select>
+          <button type="button" class="btn primary" onclick="loadJobs()">🔍 Xem</button>
+        </div>
+      </div>
+      <div class="table-wrap jobs-table-wrap">
+        <table class="vio-table" id="jobs-table">
+          <thead>
+            <tr>
+              <th>Người đăng</th>
+              <th>Người nhận</th>
+              <th>Giá</th>
+              <th>Loại</th>
+              <th>Điểm</th>
+              <th>Nguồn</th>
+              <th>Status</th>
+              <th>Override</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-body"></tbody>
+        </table>
+      </div>
+    </div>
+
   </main>
 
   <div id="toast" class="toast" hidden role="status"></div>
