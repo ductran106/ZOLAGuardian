@@ -6,7 +6,21 @@ const log = (m) =>
   console.log(`[${new Date().toISOString()}] [telegram] ${m}`);
 
 function presentType(type) {
-  return type === "LINK_SPAM" ? "LINK_SPAM_BLACKLIST" : type;
+  const map = {
+    URL_BLACKLIST: "URL_BLACKLIST",
+    KEYWORD_SPAM: "KEYWORD_SPAM",
+    REPEAT_SPAM: "REPEAT_SPAM",
+    EMOJI_SPAM: "EMOJI_SPAM",
+    STICKER_SPAM: "STICKER_SPAM",
+    MESSAGE_RECALLED_SELF: "MESSAGE_RECALLED_SELF",
+    MESSAGE_DELETED_BY_ADMIN: "MESSAGE_DELETED_BY_ADMIN",
+    LINK_SPAM: "URL_BLACKLIST",
+    SPAM_Emoji: "EMOJI_SPAM",
+    STICKER: "STICKER_SPAM",
+    REPEAT: "REPEAT_SPAM",
+    UNDO: "MESSAGE_RECALLED_SELF",
+  };
+  return map[type] || type;
 }
 
 /** Chuỗi thời gian hiển thị — ví dụ 2026-05-01 15:52:05 (GMT+7) */
@@ -44,14 +58,19 @@ export function formatSpamEvidencePlain(ctx) {
 /** Tin thu hồi (UNDO) — đúng kiểu anh gửi mẫu */
 export function formatUndoEvidencePlain(ctx) {
   const groupLine = `${ctx.groupName || "(Không tên)"} (${ctx.groupId})`;
-  const whoLine = ctx.displayName
-    ? `${ctx.displayName} (${ctx.senderId})`
-    : String(ctx.senderId);
+  const actorLine = ctx.actorDisplayName
+    ? `${ctx.actorDisplayName} (${ctx.actorId})`
+    : String(ctx.actorId);
+  const originalLine = ctx.originalDisplayName
+    ? `${ctx.originalDisplayName} (${ctx.originalSenderId})`
+    : String(ctx.originalSenderId || "[không rõ]");
   const content = clip(String(ctx.recalledContent ?? ""), 3800);
   return (
-    `🔍 [GUARDIAN] Tin nhắn bị thu hồi\n` +
+    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
-    `Người thu hồi: ${whoLine}\n` +
+    `Loại: ${presentType(ctx.type)}\n` +
+    `Người thao tác: ${actorLine}\n` +
+    `Tác giả tin gốc: ${originalLine}\n` +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${ctx.timeLabel}`
   );

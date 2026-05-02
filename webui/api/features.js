@@ -9,7 +9,15 @@ import { isBotGroupAdmin } from "../../core/groupDiscovery.js";
 
 export const featuresRouter = Router();
 export const groupsRouter = Router();
-const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+const VIOLATION_TYPES = [
+  "URL_BLACKLIST",
+  "KEYWORD_SPAM",
+  "REPEAT_SPAM",
+  "EMOJI_SPAM",
+  "STICKER_SPAM",
+  "MESSAGE_RECALLED_SELF",
+  "MESSAGE_DELETED_BY_ADMIN",
+];
 
 function readViolationRules(groupId) {
   const rows = db
@@ -49,6 +57,54 @@ groupsRouter.get("/", (_req, res) => {
     violation_rules: readViolationRules(g.group_id),
   }));
   res.json({ ok: true, items });
+});
+
+/** GET /api/groups/lookup-users?q=...&groupId=... — tra UID theo tên hiển thị */
+groupsRouter.get("/lookup-users", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const groupId = String(req.query.groupId || "").trim();
+  let limit = Number(req.query.limit);
+  if (!Number.isFinite(limit) || limit <= 0) limit = 30;
+  limit = Math.min(100, Math.max(1, Math.trunc(limit)));
+  if (q.length < 2) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Vui lòng nhập ít nhất 2 ký tự để tra UID" });
+  }
+  const like = `%${q}%`;
+  const sql = groupId
+    ? `SELECT
+         m.user_id,
+         m.display_name,
+         m.group_id,
+         COALESCE(wg.name, gn.name, m.group_id) AS group_label,
+         MAX(COALESCE(m.ts, 0)) AS last_ts,
+         COUNT(*) AS hits
+       FROM messages m
+       LEFT JOIN watch_groups wg ON wg.group_id = m.group_id
+       LEFT JOIN group_names gn ON gn.group_id = m.group_id
+       WHERE m.display_name LIKE ? AND m.group_id = ?
+       GROUP BY m.user_id, m.display_name, m.group_id
+       ORDER BY last_ts DESC
+       LIMIT ?`
+    : `SELECT
+         m.user_id,
+         m.display_name,
+         m.group_id,
+         COALESCE(wg.name, gn.name, m.group_id) AS group_label,
+         MAX(COALESCE(m.ts, 0)) AS last_ts,
+         COUNT(*) AS hits
+       FROM messages m
+       LEFT JOIN watch_groups wg ON wg.group_id = m.group_id
+       LEFT JOIN group_names gn ON gn.group_id = m.group_id
+       WHERE m.display_name LIKE ?
+       GROUP BY m.user_id, m.display_name, m.group_id
+       ORDER BY last_ts DESC
+       LIMIT ?`;
+  const rows = groupId
+    ? db.prepare(sql).all(like, groupId, limit)
+    : db.prepare(sql).all(like, limit);
+  res.json({ ok: true, q, group_id: groupId || null, items: rows });
 });
 
 const GROUP_INFO_CHUNK = 35;

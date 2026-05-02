@@ -1,5 +1,7 @@
 # HANDOFF — zalo-guardian
 
+Hướng dẫn vận hành cập nhật (Basic Auth, Tailscale, rule spam, migration): `docs/OPERATIONS.md`.
+
 ## Môi trường triển khai (duc-ProBook)
 
 - **Node**: v22.x (theo spec dự án)

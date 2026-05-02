@@ -1,5 +1,10 @@
-async function fetchJSON(url, opts) {
-  const r = await fetch(url, opts);
+async function fetchJSON(url, opts = {}) {
+  const { headers: hdrs, ...rest } = opts;
+  const r = await fetch(url, {
+    ...rest,
+    credentials: "same-origin",
+    headers: { ...(hdrs || {}) },
+  });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `${url} ${r.status}`);
   return j;
@@ -137,19 +142,91 @@ async function loadStatus() {
 }
 
 let cachedGroupItems = [];
-const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+let showEnabledOnlyGroups = false;
+const VIOLATION_TYPES = [
+  "URL_BLACKLIST",
+  "KEYWORD_SPAM",
+  "REPEAT_SPAM",
+  "EMOJI_SPAM",
+  "STICKER_SPAM",
+  "MESSAGE_RECALLED_SELF",
+  "MESSAGE_DELETED_BY_ADMIN",
+];
 const VIOLATION_LABELS = {
-  LINK_SPAM: "LINK_SPAM",
-  SPAM_Emoji: "SPAM_Emoji",
-  STICKER: "STICKER",
-  REPEAT: "REPEAT",
-  UNDO: "UNDO (thu hồi)",
+  URL_BLACKLIST: "URL_BLACKLIST (link/url cấm)",
+  KEYWORD_SPAM: "KEYWORD_SPAM (từ khóa cấm)",
+  REPEAT_SPAM: "REPEAT_SPAM (lặp tin)",
+  EMOJI_SPAM: "EMOJI_SPAM",
+  STICKER_SPAM: "STICKER_SPAM",
+  MESSAGE_RECALLED_SELF: "MESSAGE_RECALLED_SELF (tự thu hồi)",
+  MESSAGE_DELETED_BY_ADMIN: "MESSAGE_DELETED_BY_ADMIN (admin xóa)",
 };
+
+function formatLookupTs(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return "—";
+  const pad = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function renderLookupGroupOptions() {
+  const sel = document.getElementById("uid-lookup-group");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Tất cả nhóm</option>';
+  const items = sortGroupsGuardianFirst(cachedGroupItems);
+  for (const g of items) {
+    const op = document.createElement("option");
+    op.value = String(g.group_id || "");
+    op.textContent = `${String(g.name || "(Không tên)")} (${String(g.group_id || "")})`;
+    sel.appendChild(op);
+  }
+  if ([...sel.options].some((o) => o.value === current)) {
+    sel.value = current;
+  }
+}
+
+function setUidLookupMsg(text, err) {
+  const el = document.getElementById("uid-lookup-msg");
+  if (!el) return;
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.classList.toggle("err", !!err);
+}
+
+function renderUidLookupRows(items) {
+  const tbody = document.getElementById("uid-lookup-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  if (!items || !items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty muted">Không tìm thấy kết quả</td></tr>';
+    return;
+  }
+  for (const it of items) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(it.display_name || "")}</td>
+      <td><code>${escapeHtml(it.user_id || "")}</code></td>
+      <td>${escapeHtml(it.group_label || it.group_id || "")}</td>
+      <td>${escapeHtml(String(it.hits ?? 0))}</td>
+      <td>${escapeHtml(formatLookupTs(it.last_ts))}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
 
 function filterGroupsBySearch(items, q) {
   const s = String(q || "").trim().toLowerCase();
-  if (!s) return items;
-  return items.filter((g) => {
+  let out = items;
+  if (showEnabledOnlyGroups) {
+    out = out.filter((g) => Number(g.enabled) === 1);
+  }
+  if (!s) return out;
+  return out.filter((g) => {
     const name = String(g.name || "").toLowerCase();
     const id = String(g.group_id);
     return name.includes(s) || id.includes(s);
@@ -336,6 +413,7 @@ async function loadGroups() {
   try {
     const j = await fetchJSON("/api/groups/");
     cachedGroupItems = j.items || [];
+    renderLookupGroupOptions();
     applyGroupFilter();
   } catch (e) {
     cachedGroupItems = [];
@@ -370,6 +448,15 @@ document.getElementById("group-search")?.addEventListener("input", () => {
   applyGroupFilter();
 });
 
+document.getElementById("toggle-enabled-only-groups")?.addEventListener("click", () => {
+  showEnabledOnlyGroups = !showEnabledOnlyGroups;
+  const btn = document.getElementById("toggle-enabled-only-groups");
+  if (btn) {
+    btn.textContent = showEnabledOnlyGroups ? "Hiện tất cả nhóm" : "Ẩn nhóm tắt Shield";
+  }
+  applyGroupFilter();
+});
+
 document.getElementById("disable-all-groups")?.addEventListener("click", async () => {
   if (
     !confirm(
@@ -392,11 +479,66 @@ document.getElementById("disable-all-groups")?.addEventListener("click", async (
   }
 });
 
+document.getElementById("uid-lookup-form")?.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const q = String(document.getElementById("uid-lookup-q")?.value || "").trim();
+  const groupId = String(document.getElementById("uid-lookup-group")?.value || "").trim();
+  if (q.length < 2) {
+    setUidLookupMsg("Vui lòng nhập ít nhất 2 ký tự.", true);
+    return;
+  }
+  const btn = ev.target.querySelector("button[type='submit']");
+  if (btn) btn.disabled = true;
+  try {
+    const url = `/api/groups/lookup-users?q=${encodeURIComponent(q)}${
+      groupId ? `&groupId=${encodeURIComponent(groupId)}` : ""
+    }`;
+    const j = await fetchJSON(url);
+    renderUidLookupRows(j.items || []);
+    setUidLookupMsg(`Tìm thấy ${j.items?.length || 0} kết quả.`);
+  } catch (e) {
+    setUidLookupMsg(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
 async function loadSpamLists() {
   try {
     const j = await fetchJSON("/api/spam-rules/");
     renderRuleTable("allow-tbody", j.allow || [], "allow");
     renderRuleTable("block-tbody", j.block || [], "block");
+    const msg = document.getElementById("spam-sync-msg");
+    if (msg) {
+      const sync = j.sync || { configOnly: 0, dbOnly: 0 };
+      const same = Number(sync.configOnly) === 0 && Number(sync.dbOnly) === 0;
+      msg.hidden = false;
+      msg.classList.toggle("err", !same);
+      const fmt = (label, arr) => {
+        if (!arr || !arr.length) return "";
+        const lines = arr
+          .slice(0, 8)
+          .map(
+            (x) =>
+              `${x.listType}/${x.kind}: ${String(x.pattern).slice(0, 120)}`
+          )
+          .join("; ");
+        const more =
+          arr.length > 8 ? ` … (+${arr.length - 8} mục)` : "";
+        return `${label}: ${lines}${more}`;
+      };
+      const detail =
+        (!same &&
+          (sync.configOnlySamples?.length || sync.dbOnlySamples?.length)) ?
+          `\n${fmt("Chỉ có trong config", sync.configOnlySamples)}\n${fmt(
+            "Chỉ có trong DB",
+            sync.dbOnlySamples
+          )}`.trim()
+          : "";
+      msg.textContent = same
+        ? "config.json và DB đang đồng bộ."
+        : `Lệch dữ liệu: config-only ${sync.configOnly}, db-only ${sync.dbOnly}.${detail ? "\n" + detail : ""}`;
+    }
   } catch (e) {
     const ac = document.getElementById("allow-list-count");
     const bc = document.getElementById("block-list-count");
@@ -404,6 +546,12 @@ async function loadSpamLists() {
     if (bc) bc.textContent = "—";
     const a = document.getElementById("allow-tbody");
     const b = document.getElementById("block-tbody");
+    const msg = document.getElementById("spam-sync-msg");
+    if (msg) {
+      msg.hidden = false;
+      msg.classList.add("err");
+      msg.textContent = e.message;
+    }
     if (a)
       a.innerHTML = `<tr><td colspan="3" class="empty">${escapeHtml(
         e.message
@@ -417,8 +565,8 @@ const KIND_OPTIONS_ALLOW = [
   { v: "substring", l: "Chuỗi trong tin" },
 ];
 const KIND_OPTIONS_BLOCK = [
-  { v: "substring", l: "Chứa chuỗi" },
-  { v: "regex", l: "Regex" },
+  { v: "substring", l: "Keyword blacklist" },
+  { v: "regex", l: "URL/Link regex blacklist" },
 ];
 
 function renderRuleTable(tbodyId, rows, listKey) {
@@ -552,6 +700,45 @@ document.getElementById("block-form")?.addEventListener("submit", async (ev) => 
     await loadSpamLists();
   } catch (e) {
     toast(e.message, true);
+  }
+});
+
+document.getElementById("sync-config-to-db")?.addEventListener("click", async () => {
+  const btn = document.getElementById("sync-config-to-db");
+  if (btn) btn.disabled = true;
+  try {
+    const j = await fetchJSON("/api/spam-rules/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "config_to_db" }),
+    });
+    toast(`Đã nạp config vào DB (${j.inserted || 0} mục mới).`);
+    await loadSpamLists();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+document.getElementById("sync-db-to-config")?.addEventListener("click", async () => {
+  const btn = document.getElementById("sync-db-to-config");
+  if (btn) btn.disabled = true;
+  try {
+    const j = await fetchJSON("/api/spam-rules/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "db_to_config" }),
+    });
+    const w = j.written || {};
+    toast(
+      `Đã ghi config.json (hosts ${w.linkAllowHosts || 0}, allow-text ${w.allowTextSubstrings || 0}, url-regex ${w.urlPatterns || 0}, keyword ${w.keywordPatterns || 0}).`
+    );
+    await loadSpamLists();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 

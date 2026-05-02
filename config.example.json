@@ -2,6 +2,11 @@
   "watchGroups": [],
   "spam": {
     "linkAllowHosts": [],
+    "urlPatterns": [
+      "https?:\\/\\/\\S+",
+      "www\\.[^\\s]+"
+    ],
+    "keywordPatterns": [],
     "linkPatterns": [],
     "repeatThreshold": 5,
     "repeatWindowSeconds": 20,

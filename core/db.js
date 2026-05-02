@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { migrateViolationRuleTypes } from "./violationRuleMigration.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, "../data/guardian.db");
@@ -82,5 +83,11 @@ const seedFeature = db.prepare(
 );
 seedFeature.run("bot", 1);
 seedFeature.run("guardian", 1);
+
+try {
+  migrateViolationRuleTypes(db);
+} catch (e) {
+  console.error(`[db] violation rule migration: ${e.message}`);
+}
 
 export default db;

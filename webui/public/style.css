@@ -765,6 +765,33 @@ input.switch[type="checkbox"]:disabled {
   border: 1px solid var(--border);
 }
 
+.uid-lookup-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+}
+
+.uid-lookup-form input,
+.uid-lookup-form select {
+  background: #0e101a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.86rem;
+}
+
+@media (min-width: 760px) {
+  .uid-lookup-form {
+    grid-template-columns: 1.5fr 1.3fr auto;
+    align-items: center;
+  }
+}
+
+.uid-lookup-wrap {
+  margin-top: 0.65rem;
+}
+
 .vio-table {
   width: 100%;
   border-collapse: collapse;

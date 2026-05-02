@@ -11,6 +11,11 @@ import { statusRouter } from "./api/status.js";
 import { violationsRouter } from "./api/violations.js";
 import { featuresRouter, groupsRouter } from "./api/features.js";
 import { spamRoutesRouter } from "./api/spamRoutes.js";
+import {
+  isWebUiAuthConfigured,
+  verifyBasicAuth,
+  webUiBasicAuthMiddleware,
+} from "./basicAuth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +23,7 @@ export function startWebUI(config) {
   const port = Number(config?.webuiPort) || 3456;
   const app = express();
   app.use(express.json());
+  app.use(webUiBasicAuthMiddleware(config));
   app.use("/api/status", statusRouter);
   app.use("/api/violations", violationsRouter);
   app.use("/api/features", featuresRouter);
@@ -26,7 +32,18 @@ export function startWebUI(config) {
   app.use(express.static(path.join(__dirname, "public")));
 
   const server = createServer(app);
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (request, socket, head) => {
+    if (isWebUiAuthConfigured(config) && !verifyBasicAuth(request, config)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  });
 
   const broadcast = (payload) => {
     const s = JSON.stringify(payload);
@@ -46,8 +63,11 @@ export function startWebUI(config) {
   });
 
   server.listen(port, () => {
+    const authHint = isWebUiAuthConfigured(config)
+      ? " (Basic Auth bật)"
+      : "";
     console.log(
-      `[${new Date().toISOString()}] [webui] Web UI running at http://localhost:${port}`
+      `[${new Date().toISOString()}] [webui] Web UI running at http://localhost:${port}${authHint}`
     );
   });
 

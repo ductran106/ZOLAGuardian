@@ -15,10 +15,6 @@ function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean).map(String))];
 }
 
-function escapeSubstringAsRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** @param {typeof import("../config.json")} baseConfig */
 export function getEffectiveSpamConfig(baseConfig) {
   if (cached) return cached;
@@ -32,7 +28,8 @@ export function getEffectiveSpamConfig(baseConfig) {
 
   const dbAllowHosts = [];
   const dbAllowSubstring = [];
-  const dbBlockPatterns = [];
+  const dbUrlPatterns = [];
+  const dbKeywordPatterns = [];
 
   for (const r of rows) {
     const p = String(r.pattern || "").trim();
@@ -43,8 +40,8 @@ export function getEffectiveSpamConfig(baseConfig) {
       continue;
     }
     if (r.list_type === "block") {
-      if (r.kind === "regex") dbBlockPatterns.push(p);
-      else dbBlockPatterns.push(escapeSubstringAsRegex(p));
+      if (r.kind === "regex") dbUrlPatterns.push(p);
+      else dbKeywordPatterns.push(p);
     }
   }
 
@@ -58,17 +55,26 @@ export function getEffectiveSpamConfig(baseConfig) {
     ...dbAllowSubstring,
   ]);
 
-  const linkPatterns = [
+  // Hỗ trợ tương thích ngược: linkPatterns cũ được xem là URL regex.
+  const urlPatterns = uniq([
+    ...(baseSpam.urlPatterns || []),
     ...(baseSpam.linkPatterns || []),
-    ...dbBlockPatterns,
-  ];
+    ...dbUrlPatterns,
+  ]);
+  const keywordPatterns = uniq([
+    ...(baseSpam.keywordPatterns || []),
+    ...dbKeywordPatterns,
+  ]);
 
   cached = {
     ...baseConfig,
     spam: {
       ...baseSpam,
       linkAllowHosts,
-      linkPatterns,
+      urlPatterns,
+      keywordPatterns,
+      // Giữ key cũ để tương thích code/monitor cũ.
+      linkPatterns: urlPatterns,
       allowTextSubstrings,
     },
   };

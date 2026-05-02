@@ -6,7 +6,21 @@ const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [notifier] ${msg}`);
 
 function presentType(type) {
-  return type === "LINK_SPAM" ? "LINK_SPAM_BLACKLIST" : type;
+  const map = {
+    URL_BLACKLIST: "URL_BLACKLIST",
+    KEYWORD_SPAM: "KEYWORD_SPAM",
+    REPEAT_SPAM: "REPEAT_SPAM",
+    EMOJI_SPAM: "EMOJI_SPAM",
+    STICKER_SPAM: "STICKER_SPAM",
+    MESSAGE_RECALLED_SELF: "MESSAGE_RECALLED_SELF",
+    MESSAGE_DELETED_BY_ADMIN: "MESSAGE_DELETED_BY_ADMIN",
+    LINK_SPAM: "URL_BLACKLIST",
+    SPAM_Emoji: "EMOJI_SPAM",
+    STICKER: "STICKER_SPAM",
+    REPEAT: "REPEAT_SPAM",
+    UNDO: "MESSAGE_RECALLED_SELF",
+  };
+  return map[type] || type;
 }
 
 /** ThreadType.Group (zca-js) — cùng giá trị với deleteMessage(..., type: 1) */
@@ -69,7 +83,7 @@ export function buildViolationDM(
     const raw = String(content ?? "").trim();
     if (!raw) return "-";
     const short = (s, n = 180) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-    if (type === "LINK_SPAM") {
+    if (type === "URL_BLACKLIST") {
       try {
         const o = JSON.parse(raw);
         const href = o?.href || o?.url || o?.title || "";
@@ -101,30 +115,37 @@ export function buildViolationDM(
 
 export function buildViolationReply(displayName, type) {
   const who = displayName || "Thành viên";
-  if (type === "REPEAT") {
+  if (type === "REPEAT_SPAM" || type === "REPEAT") {
     return (
-      `⚠️ [Guardian] Vi phạm: REPEAT\n` +
+      `⚠️ [Guardian] Vi phạm: REPEAT_SPAM\n` +
       `${who} vi phạm: Spam tin quá 3 lần liền nhau, không phù hợp quy định nhóm — sẽ kick out nếu tái phạm.\n` +
       `Admin đã nhận thông báo.`
     );
   }
-  if (type === "LINK_SPAM") {
+  if (type === "URL_BLACKLIST" || type === "LINK_SPAM") {
     return (
-      `⚠️ [Guardian] Vi phạm: LINK_SPAM_BLACKLIST\n` +
-      `${who} vi phạm: Gửi tin nhắn không phù hợp quy định nhóm — đề nghị xem lại tin nhắn trước khi gửi lên group.\n` +
-      `Admin đã nhận thông báo,vi phạm này sẽ bị trừ điểm.`
+      `⚠️ [Guardian] Vi phạm: URL_BLACKLIST\n` +
+      `${who} vi phạm: Gửi URL/link nằm trong blacklist — đề nghị kiểm tra lại trước khi gửi.\n` +
+      `Admin đã nhận thông báo, vi phạm này sẽ bị trừ điểm nếu vi phạm nội quy.`
     );
   }
-  if (type === "STICKER") {
+  if (type === "KEYWORD_SPAM") {
     return (
-      `⚠️ [Guardian] Vi phạm: STICKER\n` +
+      `⚠️ [Guardian] Vi phạm: KEYWORD_SPAM\n` +
+      `${who} vi phạm: Nội dung chứa từ khóa spam/marketing bị cấm trong nhóm.\n` +
+      `Admin đã nhận thông báo,vi phạm này sẽ bị trừ điểm nếu vi phạm nội quy.`
+    );
+  }
+  if (type === "STICKER_SPAM" || type === "STICKER") {
+    return (
+      `⚠️ [Guardian] Vi phạm: STICKER_SPAM\n` +
       `${who} vi phạm: Gửi STICKER không phù hợp quy định nhóm — vi phạm này sẽ bị trừ điểm.\n` +
       `Admin đã nhận thông báo.`
     );
   }
-  if (type === "SPAM_Emoji") {
+  if (type === "EMOJI_SPAM" || type === "SPAM_Emoji") {
     return (
-      `⚠️ [Guardian] Vi phạm: SPAM_Emoji\n` +
+      `⚠️ [Guardian] Vi phạm: EMOJI_SPAM\n` +
       `${who} vi phạm: Gửi emoji/emoticon  — vi phạm này sẽ bị trừ điểm.\n` +
       `Admin đã nhận thông báo.`
     );
@@ -139,19 +160,27 @@ export function buildViolationReply(displayName, type) {
 export function buildUndoDM(
   groupName,
   groupId,
-  displayName,
-  senderId,
-  content
+  actorDisplayName,
+  actorId,
+  originalDisplayName,
+  originalSenderId,
+  content,
+  undoType = "MESSAGE_RECALLED_SELF"
 ) {
   const time =
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
     " (GMT+7)";
   const groupLine = `${groupName} (${groupId})`;
-  const whoLine = displayName ? `${displayName} (${senderId})` : senderId;
+  const actorLine = actorDisplayName ? `${actorDisplayName} (${actorId})` : actorId;
+  const originalLine = originalDisplayName
+    ? `${originalDisplayName} (${originalSenderId})`
+    : String(originalSenderId || "[không rõ]");
   return (
-    `🔍 [GUARDIAN] Tin nhắn bị thu hồi\n` +
+    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
-    `Người thu hồi: ${whoLine}\n` +
+    `Loại: ${presentType(undoType)}\n` +
+    `Người thao tác: ${actorLine}\n` +
+    `Tác giả tin gốc: ${originalLine}\n` +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${time}`
   );
@@ -161,9 +190,12 @@ export async function sendUndoNotice(
   api,
   groupId,
   groupName,
-  displayName,
-  senderId,
-  content
+  actorDisplayName,
+  actorId,
+  originalDisplayName,
+  originalSenderId,
+  content,
+  undoType = "MESSAGE_RECALLED_SELF"
 ) {
   const raw = String(content ?? "");
   const hasOkVariant = /(^|[^a-z0-9])(?:[o0]+k+)+(?:[^a-z0-9]|$)/i.test(
@@ -173,17 +205,26 @@ export async function sendUndoNotice(
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
     " (GMT+7)";
   const groupLine = `${groupName || groupId} (${groupId})`;
-  const whoLine = displayName ? `${displayName} (${senderId})` : String(senderId || "");
+  const actorLine = actorDisplayName
+    ? `${actorDisplayName} (${actorId})`
+    : String(actorId || "");
+  const originalLine = originalDisplayName
+    ? `${originalDisplayName} (${originalSenderId})`
+    : String(originalSenderId || "[không rõ]");
   const fullText =
-    `🔍 [GUARDIAN] Tin nhắn bị thu hồi\n` +
+    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
-    `Người thu hồi: ${whoLine}\n` +
+    `Loại: ${presentType(undoType)}\n` +
+    `Người thao tác: ${actorLine}\n` +
+    `Tác giả tin gốc: ${originalLine}\n` +
     `Nội dung đã thu hồi: "${raw}"\n` +
     `Thời gian: ${time}`;
   const shortText =
-    `🔍 [GUARDIAN] Tin nhắn bị thu hồi\n` +
+    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
     `Group: ${groupLine}\n` +
-    `Người thu hồi: ${whoLine}\n` +
+    `Loại: ${presentType(undoType)}\n` +
+    `Người thao tác: ${actorLine}\n` +
+    `Tác giả tin gốc: ${originalLine}\n` +
     `Thời gian: ${time}`;
   const text = hasOkVariant ? fullText : shortText;
   try {

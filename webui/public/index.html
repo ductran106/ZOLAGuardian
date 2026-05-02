@@ -45,6 +45,9 @@
           <button type="button" id="sync-admin" class="btn primary">
             Đồng bộ nhóm (bot là Admin)
           </button>
+          <button type="button" id="toggle-enabled-only-groups" class="btn secondary">
+            Ẩn nhóm tắt Shield
+          </button>
           <button type="button" id="disable-all-groups" class="btn secondary warn">
             Tắt Guardian — tất cả nhóm
           </button>
@@ -59,14 +62,65 @@
       <div id="groups-list" class="groups-list"></div>
     </section>
 
+    <section class="panel" aria-label="Tra UID">
+      <h2>Tra UID theo tên</h2>
+      <p class="hint">
+        Nhập tên hiển thị thành viên để tra UID từ lịch sử tin nhắn đã cache.
+        Có thể lọc theo nhóm để kết quả gọn hơn.
+      </p>
+      <form id="uid-lookup-form" class="uid-lookup-form">
+        <input
+          type="search"
+          id="uid-lookup-q"
+          name="q"
+          placeholder="Ví dụ: Hoang Long"
+          autocomplete="off"
+          spellcheck="false"
+          required
+          minlength="2"
+        />
+        <select id="uid-lookup-group">
+          <option value="">Tất cả nhóm</option>
+        </select>
+        <button type="submit" class="btn primary">Tra UID</button>
+      </form>
+      <div id="uid-lookup-msg" class="msg" hidden></div>
+      <div class="table-wrap uid-lookup-wrap">
+        <table class="vio-table" aria-label="Kết quả tra UID">
+          <thead>
+            <tr>
+              <th>Tên hiển thị</th>
+              <th>UID</th>
+              <th>Nhóm</th>
+              <th>Lần thấy</th>
+              <th>Lần cuối</th>
+            </tr>
+          </thead>
+          <tbody id="uid-lookup-tbody">
+            <tr><td colspan="5" class="empty muted">Chưa tra cứu</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel" aria-label="Whitelist Blacklist spam">
       <h2>Whitelist / Blacklist spam</h2>
       <p class="hint">
         Dữ liệu lưu trong SQLite (<code>spam_list</code>), có hiệu ngay không cần restart.
         <strong>Whitelist host</strong> = ngoại lệ giống <code>linkAllowHosts</code>.
         <strong>Whitelist chuỗi</strong> = nếu tin chứa đoạn đó → bỏ qua toàn bộ kiểm spam.
-        <strong>Blacklist chuỗi / regex</strong> = ghép vào rule chặn (regex theo kiểu <code>config.linkPatterns</code>).
+        <strong>Blacklist keyword</strong> = chặn theo từ khóa (kind = substring).
+        <strong>Blacklist URL/link regex</strong> = chặn theo mẫu URL/link (kind = regex).
       </p>
+      <div class="btn-row">
+        <button type="button" id="sync-config-to-db" class="btn secondary">
+          Nạp config.json → DB
+        </button>
+        <button type="button" id="sync-db-to-config" class="btn secondary">
+          Ghi DB → config.json
+        </button>
+      </div>
+      <div id="spam-sync-msg" class="msg" hidden></div>
       <div class="rules-grid">
         <div class="rule-col">
           <h3 class="rules-title ok">Whitelist</h3>
@@ -101,10 +155,10 @@
           <h3 class="rules-title danger">Blacklist</h3>
           <form id="block-form" class="rule-form">
             <select name="kind" aria-label="Loại blacklist">
-              <option value="substring">Chứa chuỗi</option>
-              <option value="regex">Regex</option>
+              <option value="substring">Keyword blacklist</option>
+              <option value="regex">URL/Link regex blacklist</option>
             </select>
-            <input name="pattern" type="text" placeholder="chuỗi hoặc regex" required maxlength="800" />
+            <input name="pattern" type="text" placeholder="từ khóa hoặc regex URL/link" required maxlength="800" />
             <button type="submit" class="btn danger tight">Thêm</button>
           </form>
           <details class="rule-list-details" open>

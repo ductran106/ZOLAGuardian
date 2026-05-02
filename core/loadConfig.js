@@ -9,6 +9,8 @@
 //   DM_ADMIN_ID            — user id admin nhận DM Zalo
 //   TELEGRAM_BOT_TOKEN     — BotFather
 //   TELEGRAM_CHAT_ID       — chat / nhóm Telegram nhận chứng minh
+//   WEBUI_BASIC_USER       — Basic Auth cho Web UI (tùy chọn)
+//   WEBUI_BASIC_PASSWORD
 //
 // Alias: CREDENTIALS_PATH, ZCA_PATH
 
@@ -78,6 +80,12 @@ export function loadConfig() {
   const telegramChatId =
     str(e.TELEGRAM_CHAT_ID) ?? str(base.telegramChatId);
 
+  const webuiBasicUser =
+    str(e.WEBUI_BASIC_USER) ?? str(base.webuiBasicUser);
+
+  const webuiBasicPassword =
+    str(e.WEBUI_BASIC_PASSWORD) ?? str(base.webuiBasicPassword);
+
   return {
     ...base,
     credentialsPath: credentialsPath ?? "",
@@ -86,5 +94,7 @@ export function loadConfig() {
     dmAdminId: dmAdminId ?? "",
     telegramBotToken: telegramBotToken ?? "",
     telegramChatId: telegramChatId ?? "",
+    webuiBasicUser: webuiBasicUser ?? "",
+    webuiBasicPassword: webuiBasicPassword ?? "",
   };
 }

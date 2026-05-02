@@ -23,16 +23,32 @@ import {
 
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [guardian] ${msg}`);
-const VIOLATION_TYPES = ["LINK_SPAM", "SPAM_Emoji", "STICKER", "REPEAT", "UNDO"];
+const VIOLATION_TYPES = [
+  "URL_BLACKLIST",
+  "KEYWORD_SPAM",
+  "REPEAT_SPAM",
+  "EMOJI_SPAM",
+  "STICKER_SPAM",
+  "MESSAGE_RECALLED_SELF",
+  "MESSAGE_DELETED_BY_ADMIN",
+];
 
 function isViolationRuleEnabled(groupId, type) {
   const t = String(type || "");
-  if (!VIOLATION_TYPES.includes(t)) return true;
+  const alias = {
+    LINK_SPAM: "URL_BLACKLIST",
+    SPAM_Emoji: "EMOJI_SPAM",
+    STICKER: "STICKER_SPAM",
+    REPEAT: "REPEAT_SPAM",
+    UNDO: "MESSAGE_RECALLED_SELF",
+  };
+  const canonical = alias[t] || t;
+  if (!VIOLATION_TYPES.includes(canonical)) return true;
   const row = db
     .prepare(
       "SELECT enabled FROM group_violation_rules WHERE group_id = ? AND type = ?"
     )
-    .get(groupId, t);
+    .get(groupId, canonical);
   return !row || Number(row.enabled) === 1;
 }
 
@@ -164,7 +180,8 @@ export function startGuardian(config) {
       .prepare("SELECT * FROM watch_groups WHERE group_id = ? AND enabled = 1")
       .get(undoInfo.groupId);
     if (!watchedEnabledGroup) return;
-    if (!isViolationRuleEnabled(undoInfo.groupId, "UNDO")) return;
+    const actorId = String(undoInfo.senderId || "");
+    const actorDisplayName = String(undoInfo.displayName || "");
 
     // Lookup nội dung bằng realMsgId trước, fallback về msgId
     // msg_id là TEXT trong DB — bind kiểu số có thể không khớp.
@@ -176,22 +193,30 @@ export function startGuardian(config) {
         ? String(lookupId)
         : "";
     const cachedMsg = lookupKey
-      ? db.prepare("SELECT content FROM messages WHERE msg_id = ?").get(lookupKey)
+      ? db
+          .prepare("SELECT user_id, display_name, content FROM messages WHERE msg_id = ?")
+          .get(lookupKey)
       : null;
-    const cachedContent =
-      cachedMsg?.content || "[không tìm thấy nội dung]";
+    const cachedContent = cachedMsg?.content || "[không tìm thấy nội dung]";
+    const originalSenderId = String(cachedMsg?.user_id || "");
+    const originalDisplayName = String(cachedMsg?.display_name || "");
+    const undoType =
+      originalSenderId && actorId && originalSenderId !== actorId
+        ? "MESSAGE_DELETED_BY_ADMIN"
+        : "MESSAGE_RECALLED_SELF";
+    if (!isViolationRuleEnabled(undoInfo.groupId, undoType)) return;
     undoInfo.cachedContent = cachedContent;
 
-    log(`Undo: ${undoInfo.msgId} by ${undoInfo.senderId}`);
+    log(`Undo: ${undoInfo.msgId} by ${actorId} type=${undoType}`);
 
     db.prepare(`
       INSERT INTO violations (user_id, display_name, group_id, type, detail)
       VALUES (?, ?, ?, ?, ?)
     `).run(
-      undoInfo.senderId    || "",
-      undoInfo.displayName || "",
+      actorId || "",
+      actorDisplayName || "",
       undoInfo.groupId     || "",
-      "UNDO",
+      undoType,
       undoInfo.cachedContent || ""
     );
 
@@ -206,8 +231,11 @@ export function startGuardian(config) {
     const plainUndo = formatUndoEvidencePlain({
       groupName,
       groupId: String(undoInfo.groupId || ""),
-      displayName: undoInfo.displayName || "",
-      senderId: String(undoInfo.senderId || ""),
+      type: undoType,
+      actorDisplayName,
+      actorId,
+      originalDisplayName,
+      originalSenderId,
       recalledContent: undoInfo.cachedContent,
       timeLabel: timeLabelUndo,
     });
@@ -219,9 +247,12 @@ export function startGuardian(config) {
       api,
       watchedEnabledGroup.alert_group_id || undoInfo.groupId,
       groupName,
-      undoInfo.displayName,
-      undoInfo.senderId,
-      undoInfo.cachedContent
+      actorDisplayName,
+      actorId,
+      originalDisplayName,
+      originalSenderId,
+      undoInfo.cachedContent,
+      undoType
     );
 
     if (config.dmAdminId && config.dmAdminId !== "ADMIN_USER_ID_HERE") {
@@ -230,16 +261,19 @@ export function startGuardian(config) {
         buildUndoDM(
           groupName,
           undoInfo.groupId,
-          undoInfo.displayName,
-          undoInfo.senderId,
-          undoInfo.cachedContent
+          actorDisplayName,
+          actorId,
+          originalDisplayName,
+          originalSenderId,
+          undoInfo.cachedContent,
+          undoType
         )
       );
     }
 
     eventBus.emit("guardian:violation", {
-      type: "UNDO",
-      displayName: undoInfo.displayName,
+      type: undoType,
+      displayName: actorDisplayName,
       groupId: undoInfo.groupId,
       content: undoInfo.cachedContent,
       ts: new Date().toISOString(),

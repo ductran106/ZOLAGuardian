@@ -1,5 +1,5 @@
 // modules/guardian/spam.js
-// Mục đích: Detect các loại spam — link, repeat, emoji-only, sticker
+// Mục đích: Detect các loại spam — URL, keyword, repeat, emoji-only, sticker
 // Rules từ config.json + spam_list trong DB
 //
 // REPEAT:
@@ -208,36 +208,66 @@ export function detectSpam(msg, config, adminIds = []) {
     scrubAllowListedHosts(linkHaystack, spam.linkAllowHosts)
   );
 
-  // 1. Link spam (sau khi bỏ host ngoại lệ — ví dụ site nội bộ được phép)
-  for (const pattern of spam.linkPatterns) {
-    if (new RegExp(pattern, "i").test(linkScanText)) {
-      return { type: "LINK_SPAM", detail: `Pattern: ${pattern}`, content: safeContent };
+  const testUrlPattern = (pattern, haystack) => {
+    try {
+      return new RegExp(pattern, "i").test(haystack);
+    } catch (e) {
+      console.error(
+        `[spam] Bỏ qua URL pattern không hợp lệ: ${String(pattern)} (${e.message})`
+      );
+      return false;
+    }
+  };
+
+  // 1. URL blacklist (sau khi bỏ host ngoại lệ — ví dụ site nội bộ được phép)
+  const urlPatterns = spam.urlPatterns || spam.linkPatterns || [];
+  for (const pattern of urlPatterns) {
+    if (testUrlPattern(pattern, linkScanText)) {
+      return {
+        type: "URL_BLACKLIST",
+        detail: `URL pattern: ${pattern}`,
+        content: safeContent,
+      };
     }
   }
 
-  // 2. Sticker
+  // 2. Keyword spam (substring, không cần có link)
+  const keywordPatterns = spam.keywordPatterns || [];
+  const keywordBlob = `${emojiProbe}\n${safeContent}`.toLowerCase();
+  for (const raw of keywordPatterns) {
+    const needle = String(raw || "").trim().toLowerCase();
+    if (needle && keywordBlob.includes(needle)) {
+      return {
+        type: "KEYWORD_SPAM",
+        detail: `Keyword: ${needle}`,
+        content: safeContent,
+      };
+    }
+  }
+
+  // 3. Sticker
   if (
     spam.blockSticker &&
     (msgType === "sticker" ||
       msgType === "chat.sticker" ||
       msgType === 3)
   ) {
-    return { type: "STICKER", detail: "Sticker message", content: "[sticker]" };
+    return { type: "STICKER_SPAM", detail: "Sticker message", content: "[sticker]" };
   }
 
-  // 3. Emoji spam
+  // 4. Emoji spam
   const emojiMode = String(spam.emojiMode || "strict").toLowerCase() === "balanced"
     ? "balanced"
     : "strict";
   if (spam.blockEmojiOnly && isEmojiOnly(emojiProbe, emojiMode)) {
     return {
-      type: "SPAM_Emoji",
+      type: "EMOJI_SPAM",
       detail: `Emoji-only message (${emojiMode})`,
       content: safeContent,
     };
   }
 
-  // 4. REPEAT:
+  // 5. REPEAT:
   // - 5 lần trong 20 giây (config)
   // - HOẶC 3 tin liền nhau theo timeline nhóm (config)
   let need = Number(spam.repeatThreshold);
@@ -261,7 +291,7 @@ export function detectSpam(msg, config, adminIds = []) {
   if (kept.length >= need) {
     repeatWindowMap.set(contentKey, []);
     return {
-      type: "REPEAT",
+      type: "REPEAT_SPAM",
       detail: `${need} tin giống hệt trong ${winSec}s`,
       content: safeContent,
     };
@@ -270,7 +300,7 @@ export function detectSpam(msg, config, adminIds = []) {
   if (groupStreak.senderId === sid && groupStreak.content === safeContent && groupStreak.count >= needConsecutive) {
     groupConsecutiveMap.set(gid, { senderId: "", content: "", count: 0 });
     return {
-      type: "REPEAT",
+      type: "REPEAT_SPAM",
       detail: `${needConsecutive} tin giống hệt liền nhau (không ai xen giữa)`,
       content: safeContent,
     };
