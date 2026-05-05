@@ -1,6 +1,8 @@
 /**
  * Gom cụm tin quote (mở rộng cha ngoài khung giờ) + xuất DOCX tương thích vibecode-docx-processor (parser CHAT_LINE_RE).
  * Chỉ xuất cụm có ≥2 tin liên kết qua trích dẫn; tin đơn lẻ (không quote / không được quote trong tập) bị loại.
+ * Khối @All: mặc định mọi tin trong khung có @All (không chỉ admin trong DB). ?at_all_scope=admin để chỉ lấy user_id ∈ admin_ids.
+ * Cha của quote: CAST(msg_id) = CAST(quote_msg_id) để khớp globalMsgId/msgId giữa các kiểu.
  * Mỗi cụm = thành phần liên thông theo chuỗi quote; trong cụm sắp theo giờ. Màu nền: một màu cho cả cụm,
  * xen kẽ xanh / đỏ giữa các cụm; một dòng trống giữa các cụm. "free" → highlight vàng trên nền cụm.
  *
@@ -249,8 +251,10 @@ export async function buildQuoteDocxBuffer(db, q) {
     )
     .all(groupId, startMs, endMs);
 
-  const getParent = db.prepare(
-    "SELECT msg_id, group_id, user_id, display_name, content, ts, quote_msg_id, quote_owner_id FROM messages WHERE group_id = ? AND msg_id = ?"
+  const stmtParentByQuoteRef = db.prepare(
+    `SELECT msg_id, group_id, user_id, display_name, content, ts, quote_msg_id, quote_owner_id
+     FROM messages
+     WHERE group_id = ? AND CAST(msg_id AS TEXT) = CAST(? AS TEXT)`
   );
 
   /** @type {Map<string, object & { missing?: boolean }>} */
@@ -266,7 +270,7 @@ export async function buildQuoteDocxBuffer(db, q) {
     const qid = m.quote_msg_id ? String(m.quote_msg_id).trim() : "";
     if (!qid) continue;
     if (expanded.has(qid)) continue;
-    const parent = getParent.get(groupId, qid);
+    const parent = stmtParentByQuoteRef.get(groupId, qid);
     if (!parent) continue;
     const pid = String(parent.msg_id);
     if (expanded.has(pid)) continue;
@@ -313,12 +317,17 @@ export async function buildQuoteDocxBuffer(db, q) {
     }
   }
 
+  const adminOnlyAtAll =
+    String(q.at_all_scope || "").toLowerCase() === "admin";
+
   const adminRows = inWindow.filter((row) => {
-    const uid = String(row.user_id || "");
-    if (!adminSet.has(uid)) return false;
     const c = normalizeContent(row.content);
     if (!ALL_TAG_RE.test(c)) return false;
     if (clusterMsgIds.has(String(row.msg_id))) return false;
+    if (adminOnlyAtAll) {
+      const uid = String(row.user_id || "");
+      if (!adminSet.has(uid)) return false;
+    }
     return true;
   }).sort((a, b) => Number(a.ts) - Number(b.ts));
 

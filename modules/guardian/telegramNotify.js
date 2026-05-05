@@ -2,6 +2,8 @@
 // Gửi Telegram: chỉ tin nhắn text thuần (ảnh đã tắt theo yêu cầu vận hành).
 // Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (hoặc trong config.json)
 
+import { shortGroupLabel } from "./undoFormat.js";
+
 const log = (m) =>
   console.log(`[${new Date().toISOString()}] [telegram] ${m}`);
 
@@ -55,26 +57,28 @@ export function formatSpamEvidencePlain(ctx) {
   );
 }
 
-/** Tin thu hồi (UNDO) — đúng kiểu anh gửi mẫu */
+/** Tin thu hồi (UNDO) — cùng form với thông báo Zalo */
 export function formatUndoEvidencePlain(ctx) {
-  const groupLine = `${ctx.groupName || "(Không tên)"} (${ctx.groupId})`;
-  const actorLine = ctx.actorDisplayName
-    ? `${ctx.actorDisplayName} (${ctx.actorId})`
-    : String(ctx.actorId);
-  const originalLine = ctx.originalDisplayName
-    ? `${ctx.originalDisplayName} (${ctx.originalSenderId})`
-    : String(ctx.originalSenderId || "[không rõ]");
+  const groupShort = shortGroupLabel(ctx.groupName || "");
+  const who =
+    (ctx.actorDisplayName && String(ctx.actorDisplayName).trim()) ||
+    String(ctx.actorId || "[không rõ]");
+  const origWho =
+    (ctx.originalDisplayName && String(ctx.originalDisplayName).trim()) ||
+    String(ctx.originalSenderId || "[không rõ]");
   const content = clip(String(ctx.recalledContent ?? ""), 3800);
   const dailyLine =
     ctx.undoCountToday != null && ctx.undoCountToday >= 0
-      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${ctx.undoCountToday} lần\n`
+      ? `Số vi phạm trong ngày: ${ctx.undoCountToday} lần\n`
       : "";
+  const roleBlock =
+    ctx.type === "MESSAGE_DELETED_BY_ADMIN"
+      ? `Người xóa: ${who}\nTác giả tin: ${origWho}\n`
+      : `Người thu hồi: ${who}\n`;
   return (
-    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
-    `Group: ${groupLine}\n` +
-    `Loại: ${presentType(ctx.type)}\n` +
-    `Người thao tác: ${actorLine}\n` +
-    `Tác giả tin gốc: ${originalLine}\n` +
+    `📸 Tin nhắn thu hồi\n` +
+    `Group: ${groupShort}\n` +
+    roleBlock +
     dailyLine +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${ctx.timeLabel}`

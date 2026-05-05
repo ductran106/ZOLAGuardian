@@ -270,18 +270,20 @@ export function startGuardian(config) {
       plainText: plainUndo,
     });
 
-    await sendUndoNotice(
-      api,
-      watchedEnabledGroup.alert_group_id || undoInfo.groupId,
-      groupName,
-      actorDisplayName,
-      actorId,
-      originalDisplayName,
-      originalSenderId,
-      undoInfo.cachedContent,
-      undoType,
-      undoCountToday
-    );
+    if (undoType === "MESSAGE_RECALLED_SELF") {
+      await sendUndoNotice(
+        api,
+        watchedEnabledGroup.alert_group_id || undoInfo.groupId,
+        groupName,
+        actorDisplayName,
+        actorId,
+        originalDisplayName,
+        originalSenderId,
+        undoInfo.cachedContent,
+        undoType,
+        undoCountToday
+      );
+    }
 
     if (config.dmAdminId && config.dmAdminId !== "ADMIN_USER_ID_HERE") {
       await dmAdmin(

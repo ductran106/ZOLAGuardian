@@ -2,6 +2,8 @@
 // Mục đích: Gửi cảnh báo — DM admin + reply vào group
 // sendMessage group: api.sendMessage({ msg, quote }, groupId, ThreadType.Group) — Group = 1
 
+import { shortGroupLabel } from "./undoFormat.js";
+
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [notifier] ${msg}`);
 
@@ -171,21 +173,24 @@ export function buildUndoDM(
   const time =
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
     " (GMT+7)";
-  const groupLine = `${groupName} (${groupId})`;
-  const actorLine = actorDisplayName ? `${actorDisplayName} (${actorId})` : actorId;
-  const originalLine = originalDisplayName
-    ? `${originalDisplayName} (${originalSenderId})`
-    : String(originalSenderId || "[không rõ]");
+  const groupShort = shortGroupLabel(groupName);
+  const who =
+    (actorDisplayName && String(actorDisplayName).trim()) || String(actorId || "[không rõ]");
+  const origWho =
+    (originalDisplayName && String(originalDisplayName).trim()) ||
+    String(originalSenderId || "[không rõ]");
   const dailyLine =
     undoCountToday != null && undoCountToday >= 0
-      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${undoCountToday} lần\n`
+      ? `Số vi phạm trong ngày: ${undoCountToday} lần\n`
       : "";
+  const roleBlock =
+    undoType === "MESSAGE_DELETED_BY_ADMIN"
+      ? `Người xóa: ${who}\nTác giả tin: ${origWho}\n`
+      : `Người thu hồi: ${who}\n`;
   return (
-    `🔍 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
-    `Group: ${groupLine}\n` +
-    `Loại: ${presentType(undoType)}\n` +
-    `Người thao tác: ${actorLine}\n` +
-    `Tác giả tin gốc: ${originalLine}\n` +
+    `📸 Tin nhắn thu hồi\n` +
+    `Group: ${groupShort}\n` +
+    roleBlock +
     dailyLine +
     `Nội dung đã thu hồi: "${content}"\n` +
     `Thời gian: ${time}`
@@ -211,29 +216,30 @@ export async function sendUndoNotice(
   const time =
     new Date(Date.now() + 7 * 3600000).toISOString().replace("T", " ").slice(0, 19) +
     " (GMT+7)";
-  const groupLine = (groupName && String(groupName).trim()) || "Nhóm";
-  const actorLine = (actorDisplayName && String(actorDisplayName).trim()) || "[không rõ]";
-  const originalLine =
+  const groupShort = shortGroupLabel(groupName);
+  const who =
+    (actorDisplayName && String(actorDisplayName).trim()) || "[không rõ]";
+  const origWho =
     (originalDisplayName && String(originalDisplayName).trim()) || "[không rõ]";
   const dailyLine =
     undoCountToday != null && undoCountToday >= 0
-      ? `Vi phạm thu hồi/xóa tin trong ngày (GMT+7): ${undoCountToday} lần\n`
+      ? `Số vi phạm trong ngày: ${undoCountToday} lần\n`
       : "";
+  const roleBlock =
+    undoType === "MESSAGE_DELETED_BY_ADMIN"
+      ? `Người xóa: ${who}\nTác giả tin: ${origWho}\n`
+      : `Người thu hồi: ${who}\n`;
   const fullText =
-    `📸 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
-    `Group: ${groupLine}\n` +
-    `Loại: ${presentType(undoType)}\n` +
-    `Người thao tác: ${actorLine}\n` +
-    `Tác giả tin gốc: ${originalLine}\n` +
+    `📸 Tin nhắn thu hồi\n` +
+    `Group: ${groupShort}\n` +
+    roleBlock +
     dailyLine +
     `Nội dung đã thu hồi: "${raw}"\n` +
     `Thời gian: ${time}`;
   const shortText =
-    `📸 [GUARDIAN] Tin nhắn bị xóa/thu hồi\n` +
-    `Group: ${groupLine}\n` +
-    `Loại: ${presentType(undoType)}\n` +
-    `Người thao tác: ${actorLine}\n` +
-    `Tác giả tin gốc: ${originalLine}\n` +
+    `📸 Tin nhắn thu hồi\n` +
+    `Group: ${groupShort}\n` +
+    roleBlock +
     dailyLine +
     `Thời gian: ${time}`;
   const text = hasOkVariant ? fullText : shortText;

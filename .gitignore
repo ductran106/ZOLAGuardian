@@ -1,5 +1,15 @@
 node_modules/
 data/guardian.db
+data/zalo-credentials.json
+data/*.bak
 config.json
 .env
 *.log
+guardian.out
+run.log*
+
+# Bản sao thử từ ProBook (crawlbot_portable) — không commit
+_tmp_crawlbot_portable/
+
+# Thư mục nghiên cứu zca local (một số máy dev)
+_zca_study/

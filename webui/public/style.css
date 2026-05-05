@@ -129,6 +129,38 @@ body {
   background: #5c6270;
 }
 
+.zalo-auth-panel {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.zalo-auth-hint {
+  margin-bottom: 0.65rem;
+}
+
+.zalo-auth-actions {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.zalo-auth-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.zalo-qr-wrap {
+  margin-top: 0.85rem;
+}
+
+.zalo-qr-wrap img {
+  display: block;
+  margin-top: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
 .flags-details summary {
   cursor: pointer;
   color: var(--muted);
@@ -995,4 +1027,140 @@ input.switch[type="checkbox"]:disabled {
   border: 1px solid var(--border);
   background: #0e101a;
   color: #eaeaf0;
+}
+
+.docx-label.docx-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.docx-label.docx-checkbox input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.docx-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 14rem;
+  flex: 1 1 14rem;
+}
+
+.docx-group-select-label {
+  margin: 0;
+}
+
+select.docx-group-select {
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0e101a;
+  color: #eaeaf0;
+}
+
+.docx-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.docx-add-tracked-btn,
+.docx-sync-all-btn {
+  align-self: flex-start;
+}
+
+.docx-watched-panel {
+  width: 100%;
+  max-width: 46rem;
+  padding: 0.45rem 0.55rem 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #121521;
+  font-size: 0.82rem;
+}
+
+.docx-watched-panel .docx-watched-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.docx-watched-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.32rem 0.25rem;
+  border-bottom: 1px solid rgba(42, 49, 69, 0.65);
+  border-radius: 4px;
+}
+
+.docx-watched-row:last-child {
+  border-bottom: none;
+}
+
+.docx-watched-row:hover {
+  background: rgba(76, 110, 245, 0.06);
+}
+
+.docx-watched-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.15rem 0.2rem;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+}
+
+.docx-watched-row-main.docx-watched-row-main-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.docx-watched-row-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.docx-watched-name {
+  font-size: 0.86rem;
+  word-break: break-word;
+  min-width: 0;
+  flex: 1;
+}
+
+.docx-watched-ts {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.docx-watched-remove {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.docx-watched-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }

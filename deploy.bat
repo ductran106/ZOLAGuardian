@@ -28,8 +28,13 @@ scp %SSH_OPTS% -r docs %REMOTE_USER%@%PROBOOK_IP%:%REMOTE_PATH%/
 if errorlevel 1 goto :fail
 
 echo [DEPLOY] Sync done.
-echo [DEPLOY] Chay lenh sau tren duc-ProBook:
-echo   cd ~/zalo-guardian ^&^& npm install ^&^& node index.js
+echo [DEPLOY] Remote: npm install + restart zalo-guardian ^(systemd user^)...
+
+REM dependencies + giai phong cong Web UI neu can + khoi dong lai dich vu tren ProBook
+ssh %SSH_OPTS% %REMOTE_USER%@%PROBOOK_IP% "cd %REMOTE_PATH% && npm install --no-fund --no-audit; fuser -k 3456/tcp >/dev/null 2>&1; systemctl --user restart zalo-guardian"
+if errorlevel 1 goto :fail
+
+echo [DEPLOY] Service restarted. Bot da cap nhat — khong can thao tac them tren ProBook.
 exit /b 0
 
 :fail

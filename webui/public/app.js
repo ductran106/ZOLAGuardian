@@ -73,6 +73,200 @@ function renderFlags(flags) {
   }
 }
 
+let zaloQrPollTimer = null;
+
+function updateZaloAuthFromStatus(j) {
+  const hintEl = document.getElementById("zalo-auth-hint");
+  const startBtn = document.getElementById("zalo-qr-start");
+  const abortBtn = document.getElementById("zalo-qr-abort");
+  const logoutBtn = document.getElementById("zalo-logout");
+  if (!hintEl || !startBtn || !abortBtn || !logoutBtn) return;
+
+  const a = j.zaloAuth || {};
+  const connected = !!j.zaloConnected;
+  const polling = zaloQrPollTimer != null;
+
+  let hint = "";
+  if (a.skipZalo) {
+    hint =
+      "Đang bỏ qua Zalo (ZALO_GUARDIAN_SKIP_ZALO=1). Để dùng đăng nhập QR: tắt biến này, cấu hình zcaPath + đường dẫn file credentials, khởi động lại.";
+  } else if (!a.zcaPathConfigured) {
+    hint = "Chưa cấu hình zcaPath (file dist/index.js của zca-js).";
+  } else if (!a.zcaModuleExists) {
+    hint =
+      "Không tìm thấy file zca-js tại zcaPath — kiểm tra đường dẫn hoặc chạy npm install zca-js trong thư mục dự án.";
+  } else if (!a.credentialsPathConfigured) {
+    hint =
+      "Chưa cấu hình đường dẫn credentials (ZALO_CREDENTIALS_PATH / config.json).";
+  } else if (connected) {
+    hint =
+      "Đã kết nối Zalo. Log out: sao lưu credentials (.bak), xóa file đăng nhập, dừng tiến trình — restart node index.js (hoặc systemd) để hoàn tất.";
+  } else {
+    hint =
+      "Chưa kết nối Zalo. Quét QR để tạo file credentials; sau khi thành công, restart tiến trình để bot bắt tin.";
+  }
+  hintEl.textContent = hint;
+
+  logoutBtn.hidden = !connected;
+  /** Luôn hiện nút QR khi chưa kết nối — chỉ disable khi môi trường chưa cho phép (vd. SKIP_ZALO). */
+  startBtn.hidden = connected;
+  const canQr = !!a.qrLoginAvailable && !connected && !polling;
+  startBtn.disabled = !canQr;
+  let qrTitle = "";
+  if (connected) qrTitle = "";
+  else if (polling) qrTitle = "Đang chờ quét mã QR…";
+  else if (a.skipZalo) {
+    qrTitle =
+      "Đang bỏ qua Zalo (SKIP=1). Tắt ZALO_GUARDIAN_SKIP_ZALO trong script/khởi chạy, restart tiến trình, rồi bấm lại.";
+  } else if (!a.zcaPathConfigured) {
+    qrTitle = "Cấu hình zcaPath trỏ tới zca-js dist/index.js.";
+  } else if (!a.zcaModuleExists) {
+    qrTitle = "Không thấy file zca-js — npm install zca-js hoặc sửa zcaPath.";
+  } else if (!a.credentialsPathConfigured) {
+    qrTitle = "Cấu hình đường dẫn file credentials (config / ZALO_CREDENTIALS_PATH).";
+  } else {
+    qrTitle = "Mở phiên đăng nhập bằng QR (điện thoại quét).";
+  }
+  startBtn.title = qrTitle;
+  abortBtn.hidden = !polling;
+}
+
+function stopZaloQrPoll() {
+  if (zaloQrPollTimer) {
+    clearInterval(zaloQrPollTimer);
+    zaloQrPollTimer = null;
+  }
+}
+
+function applyQrPollPayload(j) {
+  const q = j.qr || {};
+  const wrap = document.getElementById("zalo-qr-wrap");
+  const img = document.getElementById("zalo-qr-img");
+  const st = document.getElementById("zalo-qr-status");
+  const restartMsg = document.getElementById("zalo-restart-msg");
+  const abortBtn = document.getElementById("zalo-qr-abort");
+  const startBtn = document.getElementById("zalo-qr-start");
+  const phase = q.phase || "idle";
+  const busy = !!q.busy;
+
+  if (wrap && img && q.imageDataUrl) {
+    wrap.hidden = false;
+    img.src = q.imageDataUrl;
+  }
+  const lines = {
+    starting: "Đang lấy mã QR…",
+    await_scan: "Quét mã QR bằng Zalo trên điện thoại.",
+    await_confirm:
+      (q.scannedName ? "Tài khoản: " + q.scannedName + ". " : "") +
+      "Xác nhận đăng nhập trên điện thoại.",
+    writing: "Đang lưu file đăng nhập…",
+    done: "Đã lưu credentials.",
+    expired: "Mã QR hết hạn — đang chờ mã mới hoặc thử lại.",
+    declined: "Đã từ chối trên điện thoại.",
+    aborted: "Đã hủy.",
+    error: q.error ? "Lỗi: " + q.error : "Lỗi không xác định.",
+  };
+  if (st) st.textContent = lines[phase] || phase;
+
+  const terminalDone =
+    phase === "done" && q.credentialsWritten && !busy;
+  const terminalFail =
+    ["error", "aborted", "declined"].includes(phase) && !busy;
+
+  if (terminalDone || terminalFail) {
+    stopZaloQrPoll();
+    if (abortBtn) abortBtn.hidden = true;
+    if (startBtn) startBtn.disabled = false;
+    if (wrap) wrap.hidden = true;
+    if (phase === "done" && restartMsg) {
+      restartMsg.hidden = false;
+      restartMsg.textContent =
+        "Đã lưu credentials. Restart tiến trình (node index.js hoặc systemd) để kết nối Zalo và bật listener.";
+    } else if (restartMsg) restartMsg.hidden = true;
+    if (phase === "done") toast("Đăng nhập QR thành công. Restart tiến trình.");
+    else if (phase === "error") toast(lines.error || phase, true);
+    else if (phase === "aborted") toast("Đã hủy QR.");
+    else if (phase === "declined") toast("Đã từ chối trên điện thoại.", true);
+    loadStatus().catch(() => {});
+  }
+}
+
+function startZaloQrPoll() {
+  stopZaloQrPoll();
+  const tick = () => {
+    fetch("/api/zalo/qr-state", { credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!j || j.ok === false) return;
+        applyQrPollPayload(j);
+      })
+      .catch(() => {});
+  };
+  tick();
+  zaloQrPollTimer = setInterval(tick, 1500);
+}
+
+async function onZaloQrStartClick() {
+  try {
+    const res = await fetch("/api/zalo/qr-start", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || String(res.status));
+    const restartMsg = document.getElementById("zalo-restart-msg");
+    if (restartMsg) restartMsg.hidden = true;
+    const ab = document.getElementById("zalo-qr-abort");
+    if (ab) ab.hidden = false;
+    const st = document.getElementById("zalo-qr-start");
+    if (st) st.disabled = true;
+    startZaloQrPoll();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function onZaloQrAbortClick() {
+  try {
+    await fetchJSON("/api/zalo/qr-abort", { method: "POST" });
+  } catch (e) {
+    toast(e.message, true);
+  }
+  stopZaloQrPoll();
+  const wrap = document.getElementById("zalo-qr-wrap");
+  if (wrap) wrap.hidden = true;
+  const ab = document.getElementById("zalo-qr-abort");
+  if (ab) ab.hidden = true;
+  loadStatus().catch(() => {});
+}
+
+async function onZaloLogoutClick() {
+  if (
+    !confirm(
+      "Log out Zalo: sao lưu credentials (.bak), xóa file đăng nhập, dừng tiến trình. Anh restart service/node sau. Tiếp tục?"
+    )
+  )
+    return;
+  try {
+    await fetchJSON("/api/zalo/logout", { method: "POST" });
+    toast("Đã đăng xuất — tiến trình sẽ dừng. Restart khi cần.");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function wireZaloAuthButtons() {
+  document
+    .getElementById("zalo-qr-start")
+    ?.addEventListener("click", onZaloQrStartClick);
+  document
+    .getElementById("zalo-qr-abort")
+    ?.addEventListener("click", onZaloQrAbortClick);
+  document
+    .getElementById("zalo-logout")
+    ?.addEventListener("click", onZaloLogoutClick);
+}
+
 function renderStatus(j) {
   const grid = document.getElementById("status-grid");
   if (!grid) return;
@@ -105,6 +299,7 @@ function renderStatus(j) {
   `;
 
   renderFlags(j.flags || []);
+  updateZaloAuthFromStatus(j);
 }
 
 function summaryFlagBadges(flags) {
@@ -172,6 +367,102 @@ function formatLookupTs(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
     d.getHours()
   )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Thời điểm tin mới nhất trong DB cho panel DOCX */
+function formatDocxLastMsg(ts) {
+  if (ts == null || ts === "") return "Chưa có tin trong DB";
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "Chưa có tin trong DB";
+  return formatLookupTs(n);
+}
+
+/** Cùng dòng với tên nhóm — gọn khi chưa có tin */
+function formatDocxLastMsgInline(ts) {
+  if (ts == null || ts === "") return "—";
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return formatLookupTs(n);
+}
+
+async function refreshDocxWatchedPanel() {
+  const panel = document.getElementById("export-docx-watched-panel");
+  if (!panel) return;
+  panel.innerHTML = '<p class="muted">Đang tải…</p>';
+  try {
+    const j = await fetchJSON("/api/export/docx-tracked-snapshot");
+    const items = Array.isArray(j.items) ? j.items : [];
+    if (items.length === 0) {
+      panel.innerHTML =
+        '<p class="docx-watched-title">Theo dõi xuất DOCX</p><p class="docx-watched-empty">Chưa có nhóm trong danh sách. Chọn nhóm ở ô trên rồi bấm «Thêm nhóm…».</p>';
+      return;
+    }
+    panel.innerHTML = "";
+    const title = document.createElement("p");
+    title.className = "docx-watched-title";
+    title.textContent =
+      "Theo dõi xuất DOCX — bấm dòng để chọn nhóm xuất; cột phải = tin mới nhất trong DB (cache listener)";
+    panel.appendChild(title);
+    for (const it of items) {
+      const gid = String(it.group_id || "");
+      const row = document.createElement("div");
+      row.className = "docx-watched-row";
+
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "docx-watched-row-main docx-watched-row-main-inline";
+      const nameEl = document.createElement("span");
+      nameEl.className = "docx-watched-name";
+      nameEl.textContent = `${String(it.name || "(Không tên)")} · ${gid}`;
+      const tsEl = document.createElement("span");
+      tsEl.className = "docx-watched-ts";
+      tsEl.textContent = formatDocxLastMsgInline(it.last_message_ts);
+      tsEl.title =
+        formatDocxLastMsg(it.last_message_ts) === "Chưa có tin trong DB"
+          ? "Chưa có tin trong DB (listener chưa ghi msg_id cho nhóm này)"
+          : "Thời điểm tin mới nhất đã lưu trong DB (Asia/Ho_Chi_Minh theo trình duyệt)";
+      main.append(nameEl, tsEl);
+      main.addEventListener("click", () => {
+        const sel = document.getElementById("export-docx-group");
+        if (!sel) return;
+        if ([...sel.options].some((o) => o.value === gid)) {
+          sel.value = gid;
+          toast("Đã chọn nhóm xuất DOCX.");
+        } else {
+          toast(
+            "Nhóm này chưa có trong dropdown — đồng bộ nhóm hoặc thêm group_id vào watch_groups.",
+            true
+          );
+        }
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn secondary docx-watched-remove";
+      removeBtn.textContent = "Xóa";
+      removeBtn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        try {
+          await fetchJSON("/api/export/docx-tracked", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ group_id: gid, remove: true }),
+          });
+          toast("Đã gỡ nhóm khỏi theo dõi xuất DOCX.");
+          await refreshDocxWatchedPanel();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      });
+
+      row.append(main, removeBtn);
+      panel.appendChild(row);
+    }
+  } catch (e) {
+    panel.innerHTML = `<p class="docx-watched-empty">${escapeHtml(
+      e.message
+    )}</p>`;
+  }
 }
 
 function renderLookupGroupOptions() {
@@ -461,10 +752,12 @@ async function loadGroups() {
     renderLookupGroupOptions();
     renderScoreGroupOptions();
     renderExportDocxGroupOptions();
+    void refreshDocxWatchedPanel();
     applyGroupFilter();
   } catch (e) {
     cachedGroupItems = [];
     root.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+    void refreshDocxWatchedPanel();
   }
 }
 
@@ -875,6 +1168,7 @@ function connectWS() {
   };
 }
 
+wireZaloAuthButtons();
 loadAll();
 connectWS();
 setInterval(loadAll, 20000);
@@ -1030,6 +1324,9 @@ function exportQuoteDocx() {
   url += `time_start=${encodeURIComponent(norm(timeStart) || "00:00:00")}&`;
   url += `time_end=${encodeURIComponent(norm(timeEnd) || "23:59:59")}&`;
   url += `group_id=${encodeURIComponent(groupId)}`;
+  if (document.getElementById("export-docx-atall-admin-only")?.checked) {
+    url += `&at_all_scope=admin`;
+  }
   window.location.href = url;
 }
 
@@ -1041,4 +1338,48 @@ document.addEventListener("DOMContentLoaded", () => {
   if (sd) sd.value = today;
   if (jd) jd.value = today;
   if (ed) ed.value = today;
+  document
+    .getElementById("export-docx-add-tracked")
+    ?.addEventListener("click", async () => {
+      const sel = document.getElementById("export-docx-group");
+      const gid = String(sel?.value || "").trim();
+      if (!gid) {
+        toast("Chọn nhóm ở dropdown trước.", true);
+        return;
+      }
+      try {
+        await fetchJSON("/api/export/docx-tracked", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ group_id: gid }),
+        });
+        toast("Đã thêm nhóm vào theo dõi xuất DOCX.");
+        await refreshDocxWatchedPanel();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  document
+    .getElementById("export-docx-sync-all-groups")
+    ?.addEventListener("click", async () => {
+      const btn = document.getElementById("export-docx-sync-all-groups");
+      if (btn) btn.disabled = true;
+      try {
+        const j = await fetchJSON("/api/groups/sync?mode=all", {
+          method: "POST",
+        });
+        const n = Number(j.count);
+        toast(
+          Number.isFinite(n)
+            ? `Đã đồng bộ ${n} nhóm từ Zalo vào danh sách (ô chọn nhóm).`
+            : "Đã đồng bộ nhóm."
+        );
+        await loadGroups();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  void refreshDocxWatchedPanel();
 });

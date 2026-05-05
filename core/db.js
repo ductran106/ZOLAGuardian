@@ -130,6 +130,13 @@ try {
 } catch {}
 
 try {
+  db.prepare(`CREATE TABLE IF NOT EXISTS docx_tracked_groups (
+    group_id   TEXT PRIMARY KEY,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+} catch (e) {}
+
+try {
   db.prepare(`CREATE TABLE IF NOT EXISTS daily_scores (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT,

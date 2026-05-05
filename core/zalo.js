@@ -18,7 +18,9 @@ export async function startZalo(config) {
   const creds = JSON.parse(readFileSync(config.credentialsPath, "utf8"));
 
   log("Đang login...");
-  const zalo = new Zalo({ logging: false });
+  // selfListen: tin của chính account (bot) cũng được listener đẩy vào → có trong DB / xuất DOCX.
+  // Mặc định false thì zca-js bỏ qua groupEvent.isSelf → không cache tin bot (vd: 2287316777534438968).
+  const zalo = new Zalo({ logging: false, selfListen: true });
   api = await zalo.login({
     imei: creds.imei,
     cookie: creds.cookie,
@@ -117,4 +119,22 @@ export async function startZalo(config) {
 
 export function getApi() {
   return api;
+}
+
+/**
+ * Dừng listener WebSocket và xóa tham chiếu API (đăng xuất phía client).
+ */
+export function stopZalo() {
+  if (!api) return;
+  try {
+    if (api.listener && typeof api.listener.stop === "function") {
+      api.listener.stop();
+    }
+  } catch (e) {
+    console.log(
+      `[${new Date().toISOString()}] [zalo] stopZalo: ${String(e?.message || e)}`
+    );
+  }
+  api = null;
+  eventBus.emit("zalo:disconnect", {});
 }

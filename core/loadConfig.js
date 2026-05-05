@@ -3,8 +3,8 @@
 // Không dùng package dotenv — parser .env tối giản.
 //
 // Biến .env (ưu tiên ghi đè):
-//   ZALO_CREDENTIALS_PATH  — file credentials Zalo (cookie, imei…)
-//   ZCA_JS_PATH            — đường dẫn tới zca-js dist/index.js
+//   ZALO_CREDENTIALS_PATH  — file credentials (mặc định: data/zalo-credentials.json)
+//   ZCA_JS_PATH            — zca-js dist/index.js (mặc định: node_modules/zca-js nếu có)
 //   BOT_USER_ID            — tuỳ chọn (tham chiếu vận hành)
 //   DM_ADMIN_ID            — user id admin nhận DM Zalo
 //   TELEGRAM_BOT_TOKEN     — BotFather
@@ -58,15 +58,24 @@ export function loadConfig() {
 
   const e = process.env;
 
-  const credentialsPath =
+  let credentialsPath =
     str(e.ZALO_CREDENTIALS_PATH) ??
     str(e.CREDENTIALS_PATH) ??
     str(base.credentialsPath);
 
-  const zcaPath =
+  let zcaPath =
     str(e.ZCA_JS_PATH) ??
     str(e.ZCA_PATH) ??
     str(base.zcaPath);
+
+  const bundledZca = path.join(ROOT, "node_modules", "zca-js", "dist", "index.js");
+  if (!zcaPath && existsSync(bundledZca)) {
+    zcaPath = bundledZca;
+  }
+
+  if (!credentialsPath) {
+    credentialsPath = path.join(ROOT, "data", "zalo-credentials.json");
+  }
 
   const botUserId =
     str(e.BOT_USER_ID) ?? str(base.botUserId);

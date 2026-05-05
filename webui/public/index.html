@@ -24,6 +24,25 @@
     <section class="panel" aria-label="Trạng thái">
       <h2>Tổng quan</h2>
       <div id="status-grid" class="status-grid"></div>
+      <div id="zalo-auth-panel" class="zalo-auth-panel" aria-label="Đăng nhập Zalo">
+        <p id="zalo-auth-hint" class="hint zalo-auth-hint"></p>
+        <div class="btn-row zalo-auth-actions">
+          <button type="button" id="zalo-qr-start" class="btn primary">
+            Đăng nhập Zalo (QR)
+          </button>
+          <button type="button" id="zalo-qr-abort" class="btn secondary" hidden>
+            Hủy QR
+          </button>
+          <button type="button" id="zalo-logout" class="btn secondary warn" hidden>
+            Log out Zalo
+          </button>
+        </div>
+        <div id="zalo-qr-wrap" class="zalo-qr-wrap" hidden>
+          <p id="zalo-qr-status" class="muted"></p>
+          <img id="zalo-qr-img" alt="Mã QR đăng nhập Zalo" width="220" height="220" decoding="async" />
+        </div>
+        <p id="zalo-restart-msg" class="msg ok" hidden></p>
+      </div>
       <details class="flags-details">
         <summary>Feature flags (nâng cao)</summary>
         <div id="flags-list" class="flags-chips"></div>
@@ -36,14 +55,37 @@
         <p class="hint docx-hint">
           Khung giờ theo <strong>Asia/Ho_Chi_Minh</strong>. Định dạng dòng tương thích
           <code>vibecode-docx-processor</code>. Tin cha ngoài khung có <code>*Missing*</code> trong nội dung.
+          Khối @All: mặc định <strong>mọi tin có @All</strong> trong khung giờ (không chỉ admin trong DB).
+          <strong>Danh sách theo dõi xuất DOCX</strong> (lưu trong DB, không phụ thuộc Shield) luôn hiển thị bên dưới; cột phải mỗi dòng là <strong>thời điểm tin mới nhất</strong> đã có trong DB (cache listener).
+          Nút <strong>Đồng bộ nhóm Zalo (tất cả…)</strong> kéo toàn bộ nhóm tài khoản đang tham gia vào ô chọn (cần Zalo đã đăng nhập).
         </p>
         <div class="controls score-job-controls docx-controls">
           <label class="docx-label">Ngày <input type="date" id="export-docx-date" /></label>
           <label class="docx-label">Từ <input type="time" id="export-docx-start" step="60" value="00:00" /></label>
           <label class="docx-label">Đến <input type="time" id="export-docx-end" step="60" value="23:59" /></label>
-          <select id="export-docx-group" aria-label="Nhóm">
-            <option value="">— Chọn nhóm —</option>
-          </select>
+          <div class="docx-group-block">
+            <label class="docx-label docx-group-select-label" for="export-docx-group">Nhóm</label>
+            <select id="export-docx-group" class="docx-group-select" aria-label="Nhóm">
+              <option value="">— Chọn nhóm —</option>
+            </select>
+            <div class="docx-group-actions">
+              <button type="button" id="export-docx-add-tracked" class="btn secondary docx-add-tracked-btn">
+                ➕ Thêm nhóm (ô trên) vào theo dõi xuất DOCX
+              </button>
+              <button type="button" id="export-docx-sync-all-groups" class="btn secondary docx-sync-all-btn">
+                Đồng bộ nhóm Zalo (tất cả nhóm đang tham gia)
+              </button>
+            </div>
+            <div
+              id="export-docx-watched-panel"
+              class="docx-watched-panel"
+              aria-live="polite"
+            ></div>
+          </div>
+          <label class="docx-label docx-checkbox">
+            <input type="checkbox" id="export-docx-atall-admin-only" />
+            Chỉ @All của admin (watch_groups)
+          </label>
           <button type="button" class="btn primary" onclick="exportQuoteDocx()">⬇️ Tải DOCX</button>
         </div>
       </div>

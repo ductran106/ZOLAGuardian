@@ -3,6 +3,7 @@
 import { Router } from "express";
 import { getApi } from "../../core/zalo.js";
 import { getAllFlags } from "../../core/featureFlags.js";
+import { getZaloAuthEnv } from "./zaloAuth.js";
 
 export const statusRouter = Router();
 
@@ -67,5 +68,6 @@ statusRouter.get("/", async (_req, res) => {
     ownId,
     ownName,
     flags,
+    zaloAuth: getZaloAuthEnv(),
   });
 });
