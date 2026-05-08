@@ -1,5 +1,7 @@
 {
   "watchGroups": [],
+  "watchdogQuietStart": "23:00",
+  "watchdogQuietEnd": "05:00",
   "spam": {
     "linkAllowHosts": [],
     "urlPatterns": [

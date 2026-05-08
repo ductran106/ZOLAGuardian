@@ -5,6 +5,8 @@
  * Cha của quote: CAST(msg_id) = CAST(quote_msg_id) để khớp globalMsgId/msgId giữa các kiểu.
  * Mỗi cụm = thành phần liên thông theo chuỗi quote; trong cụm sắp theo giờ. Màu nền: một màu cho cả cụm,
  * xen kẽ xanh / đỏ giữa các cụm; một dòng trống giữa các cụm. "free" → highlight vàng trên nền cụm.
+ * Bổ sung: chèn các tin "thu hồi" do bot gửi (sender_id = botUserId + marker nội dung)
+ * vào đúng timeline giữa các cụm quote.
  *
  * Lưu ý: docx v9 serialize `paragraph.shading` (w:shd fill) ra XML rỗng — không hiển thị nền.
  * Dùng highlight toàn dòng (GREEN/RED) để Word luôn vẽ được (đã kiểm tra OOXML).
@@ -24,6 +26,8 @@ import {
 } from "docx";
 
 const ALL_TAG_RE = /\b@All\b/;
+const BOT_RECALL_MARKER_A = "Tin nhắn thu hồi";
+const BOT_RECALL_MARKER_B = "Nội dung đã thu hồi";
 
 /** Calibri 11pt — cùng cỡ mặc định Word Normal (vibecode / python-docx; docx = half-points) */
 const FONT_MAIN = "Calibri";
@@ -185,6 +189,10 @@ function sanitizeSender(name) {
   return s.replace(/:/g, "∶");
 }
 
+function normalizeUid(v) {
+  return String(v || "").trim().replace(/_0$/i, "");
+}
+
 function formatChatLine(row, missing) {
   const tsStr = formatTsVN(row.ts);
   const name = sanitizeSender(row.display_name || row.user_id);
@@ -221,6 +229,7 @@ export async function buildQuoteDocxBuffer(db, q) {
   const date = String(q.date || "").trim();
   const timeStart = String(q.time_start || "").trim() || "00:00";
   const timeEnd = String(q.time_end || "").trim() || "23:59";
+  const botUserId = normalizeUid(q.bot_user_id || "");
 
   if (!groupId) throw new Error("group_id_required");
   if (!date) throw new Error("date_required");
@@ -331,12 +340,27 @@ export async function buildQuoteDocxBuffer(db, q) {
     return true;
   }).sort((a, b) => Number(a.ts) - Number(b.ts));
 
+  /** Tin bot báo thu hồi: sender_id = botUserId + có marker mẫu */
+  const recallRows = inWindow
+    .filter((row) => {
+      const c = normalizeContent(row.content);
+      const isRecallNotice =
+        c.includes(BOT_RECALL_MARKER_A) && c.includes(BOT_RECALL_MARKER_B);
+      if (!isRecallNotice) return false;
+      if (clusterMsgIds.has(String(row.msg_id))) return false;
+      // Nếu chưa cấu hình BOT_USER_ID thì fallback theo marker để không bỏ sót.
+      if (!botUserId) return true;
+      const uid = normalizeUid(row.user_id || "");
+      return uid === botUserId;
+    })
+    .sort((a, b) => Number(a.ts) - Number(b.ts));
+
   const children = [];
 
   /** Xen kẽ màu theo từng cụm quote; khối admin @All là một cụm riêng. */
   let clusterRound = 0;
 
-  if (linkedClusters.length === 0 && adminRows.length === 0) {
+  if (linkedClusters.length === 0 && recallRows.length === 0 && adminRows.length === 0) {
     children.push(
       new Paragraph({
         children: [
@@ -349,12 +373,27 @@ export async function buildQuoteDocxBuffer(db, q) {
       })
     );
   } else {
-    linkedClusters.forEach((cl, ci) => {
-      if (ci > 0) {
+    const timelineBlocks = [
+      ...linkedClusters.map((rows, idx) => ({
+        kind: "cluster",
+        rows,
+        ts: Math.min(...rows.map((x) => Number(x.ts))),
+        idx,
+      })),
+      ...recallRows.map((row, idx) => ({
+        kind: "recall",
+        rows: [{ ...row, missing: false }],
+        ts: Number(row.ts) || 0,
+        idx,
+      })),
+    ].sort((a, b) => a.ts - b.ts || a.idx - b.idx);
+
+    timelineBlocks.forEach((block, bi) => {
+      if (bi > 0) {
         children.push(emptySeparatorParagraph());
       }
       const baseHl = toneHighlightForClusterIndex(clusterRound++);
-      for (const row of cl) {
+      for (const row of block.rows) {
         children.push(
           paragraphClusterLine(
             formatChatLine(row, !!row.missing),
@@ -365,7 +404,7 @@ export async function buildQuoteDocxBuffer(db, q) {
     });
 
     if (adminRows.length > 0) {
-      if (linkedClusters.length > 0) {
+      if (timelineBlocks.length > 0) {
         children.push(emptySeparatorParagraph());
       }
       const baseHlAdmin = toneHighlightForClusterIndex(clusterRound++);

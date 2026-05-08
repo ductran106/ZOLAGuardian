@@ -163,6 +163,56 @@ function contentExemptFromRepeatSpam(text) {
   return /(^|[^a-z0-9])(?:[oO0]+[kK]+)+(?:[^a-z0-9]|$)/.test(raw);
 }
 
+/**
+ * Bỏ qua message hệ thống liên quan xóa/thu hồi (admin xóa tin, recall event...)
+ * để tránh false-positive spam cho admin.
+ */
+function isSystemDeleteAction(msgType, content, safeContent) {
+  const mt = String(msgType ?? "").toLowerCase();
+  if (Number(msgType) === 3) return true;
+  const hasDeleteMarkerDeep = (v, depth = 0) => {
+    if (depth > 6 || v == null) return false;
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (hasDeleteMarkerDeep(item, depth + 1)) return true;
+      }
+      return false;
+    }
+    if (typeof v !== "object") return false;
+    if (
+      "globalDelMsgId" in v ||
+      "clientDelMsgId" in v ||
+      "delMsgId" in v
+    ) {
+      return true;
+    }
+    if (Number(v.type) === 3 && Number(v.actionType) >= 0) return true;
+    for (const k of Object.keys(v)) {
+      if (hasDeleteMarkerDeep(v[k], depth + 1)) return true;
+    }
+    return false;
+  };
+  if (hasDeleteMarkerDeep(content)) return true;
+  const s = String(safeContent || "");
+  if (
+    /globaldelmsgid/i.test(s) ||
+    /clientdelmsgid/i.test(s) ||
+    /\"type\"\s*:\s*3\s*,\s*\"actiontype\"\s*:/i.test(s)
+  ) {
+    return true;
+  }
+  if (
+    /\[?\s*tin nhắn đã xóa\s*\]?/i.test(s) ||
+    /\[?\s*tin nhắn đã bị xóa\s*\]?/i.test(s) ||
+    /đã xóa tin nhắn này/i.test(s) ||
+    /\[?\s*tin nhắn chưa hỗ trợ ở phiên bản hiện tại\s*\]?/i.test(s)
+  ) {
+    return true;
+  }
+  if (mt.includes("undo") || mt.includes("recall") || mt.includes("revoke")) return true;
+  return false;
+}
+
 export function detectSpam(msg, config, adminIds = []) {
   const senderId = msg.data?.uidFrom || msg.uidFrom || "";
   const groupId  = msg.data?.idTo    || msg.idTo    || "";
@@ -173,6 +223,10 @@ export function detectSpam(msg, config, adminIds = []) {
     typeof content === "object" && content !== null
       ? JSON.stringify(content)
       : String(content || "");
+
+  if (isSystemDeleteAction(msgType, content, safeContent)) {
+    return null;
+  }
 
   const repeatExemptOk = contentExemptFromRepeatSpam(safeContent);
 
@@ -263,8 +317,7 @@ export function detectSpam(msg, config, adminIds = []) {
   if (
     spam.blockSticker &&
     (msgType === "sticker" ||
-      msgType === "chat.sticker" ||
-      msgType === 3)
+      msgType === "chat.sticker")
   ) {
     return { type: "STICKER_SPAM", detail: "Sticker message", content: "[sticker]" };
   }

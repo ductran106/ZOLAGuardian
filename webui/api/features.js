@@ -6,6 +6,7 @@ import eventBus from "../../core/eventBus.js";
 import db from "../../core/db.js";
 import { getApi } from "../../core/zalo.js";
 import { isBotGroupAdmin } from "../../core/groupDiscovery.js";
+import { parseHHMM } from "../../core/watchdogQuiet.js";
 
 export const featuresRouter = Router();
 export const groupsRouter = Router();
@@ -48,7 +49,8 @@ featuresRouter.post("/", (req, res) => {
 groupsRouter.get("/", (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT group_id, name, enabled, alert_group_id, admin_ids
+      `SELECT group_id, name, enabled, alert_group_id, admin_ids,
+              watchdog_quiet_mode, watchdog_quiet_start, watchdog_quiet_end
        FROM watch_groups ORDER BY name COLLATE NOCASE`
     )
     .all();
@@ -179,6 +181,71 @@ groupsRouter.post("/bulk/disable-shield", (_req, res) => {
     ok: true,
     updated: typeof r.changes === "number" ? r.changes : 0,
   });
+});
+
+/** PATCH /api/groups/:groupId/watchdog-quiet — giờ nghỉ watchdog theo nhóm (GMT+7) */
+groupsRouter.patch("/:groupId/watchdog-quiet", (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  const { mode, watchdogQuietStart, watchdogQuietEnd } = req.body || {};
+  if (!groupId) {
+    return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  }
+  const m = String(mode || "").trim().toLowerCase();
+  if (!["inherit", "custom", "off"].includes(m)) {
+    return res.status(400).json({
+      ok: false,
+      error: "mode phải là inherit | custom | off",
+    });
+  }
+  const exists = db
+    .prepare("SELECT 1 FROM watch_groups WHERE group_id = ?")
+    .get(groupId);
+  if (!exists) {
+    return res.status(404).json({ ok: false, error: "Không tìm thấy nhóm" });
+  }
+  if (m === "custom") {
+    const s = String(watchdogQuietStart ?? "").trim();
+    const e = String(watchdogQuietEnd ?? "").trim();
+    if (!s || !e) {
+      return res.status(400).json({
+        ok: false,
+        error: "custom cần watchdogQuietStart và watchdogQuietEnd (HH:MM)",
+      });
+    }
+    if (parseHHMM(s) == null || parseHHMM(e) == null) {
+      return res.status(400).json({
+        ok: false,
+        error: "Định dạng giờ phải là HH:MM (00:00–23:59)",
+      });
+    }
+    db.prepare(
+      `UPDATE watch_groups SET
+        watchdog_quiet_mode = ?,
+        watchdog_quiet_start = ?,
+        watchdog_quiet_end = ?
+       WHERE group_id = ?`
+    ).run(m, s, e, groupId);
+  } else if (m === "inherit") {
+    db.prepare(
+      `UPDATE watch_groups SET
+        watchdog_quiet_mode = ?,
+        watchdog_quiet_start = NULL,
+        watchdog_quiet_end = NULL
+       WHERE group_id = ?`
+    ).run(m, groupId);
+  } else {
+    db.prepare(
+      `UPDATE watch_groups SET watchdog_quiet_mode = ? WHERE group_id = ?`
+    ).run(m, groupId);
+  }
+  eventBus.emit("guardian:db:changed");
+  const row = db
+    .prepare(
+      `SELECT group_id, watchdog_quiet_mode, watchdog_quiet_start, watchdog_quiet_end
+       FROM watch_groups WHERE group_id = ?`
+    )
+    .get(groupId);
+  res.json({ ok: true, ...row });
 });
 
 /** PATCH /api/groups/:groupId/admins — cập nhật admin_ids (miễn kiểm spam), JSON array text trong DB */

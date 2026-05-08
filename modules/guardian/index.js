@@ -14,12 +14,6 @@ import {
   buildViolationDM,
   buildUndoDM,
 } from "./notifier.js";
-import {
-  timeLabelGMT7,
-  formatSpamEvidencePlain,
-  formatUndoEvidencePlain,
-  sendTelegramEvidence,
-} from "./telegramNotify.js";
 
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [guardian] ${msg}`);
@@ -97,6 +91,7 @@ export function startGuardian(config) {
     const content     = msg.data?.content || msg.content || "";
     const msgId       = msg.data?.msgId   || msg.msgId   || "";
     const ts          = msg.data?.ts      || Date.now();
+    const ownId       = String(api?.getOwnId?.() || "");
 
     // Cache message — chỉ insert khi có msgId
     if (msgId) {
@@ -124,6 +119,9 @@ export function startGuardian(config) {
       .get(groupId);
     if (!watchGroup) return;
 
+    // Không tự xử phạt tin do chính account bot/admin gửi (selfListen=true).
+    if (ownId && String(senderId || "") === ownId) return;
+
     const adminIds = JSON.parse(watchGroup.admin_ids || "[]");
     const violation = detectSpam(msg, config, adminIds);
     if (!violation) return;
@@ -131,21 +129,7 @@ export function startGuardian(config) {
 
     log(`Violation: ${violation.type} by ${displayName} in ${groupId}`);
 
-    const timeLabel = timeLabelGMT7();
-    const plainEvidence = formatSpamEvidencePlain({
-      groupName: watchGroup.name || "",
-      groupId,
-      displayName,
-      senderId,
-      type: violation.type,
-      detail: violation.detail,
-      content: violation.content,
-      timeLabel,
-    });
-
-    await sendTelegramEvidence(config, {
-      plainText: plainEvidence,
-    });
+    // Yêu cầu vận hành: không gửi thông báo vi phạm qua Telegram.
 
     await sendQuotedViolationNotice(
       api,
@@ -253,22 +237,7 @@ export function startGuardian(config) {
     const groupName =
       watchedEnabledGroup?.name || groupNameRow?.name || undoInfo.groupId;
 
-    const timeLabelUndo = timeLabelGMT7();
-    const plainUndo = formatUndoEvidencePlain({
-      groupName,
-      groupId: String(undoInfo.groupId || ""),
-      type: undoType,
-      actorDisplayName,
-      actorId,
-      originalDisplayName,
-      originalSenderId,
-      recalledContent: undoInfo.cachedContent,
-      timeLabel: timeLabelUndo,
-      undoCountToday,
-    });
-    await sendTelegramEvidence(config, {
-      plainText: plainUndo,
-    });
+    // Yêu cầu vận hành: không gửi thông báo vi phạm/thu hồi qua Telegram.
 
     if (undoType === "MESSAGE_RECALLED_SELF") {
       await sendUndoNotice(

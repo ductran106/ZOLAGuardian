@@ -137,6 +137,18 @@ try {
 } catch (e) {}
 
 try {
+  db.prepare(
+    "ALTER TABLE watch_groups ADD COLUMN watchdog_quiet_mode TEXT DEFAULT 'inherit'"
+  ).run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE watch_groups ADD COLUMN watchdog_quiet_start TEXT").run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE watch_groups ADD COLUMN watchdog_quiet_end TEXT").run();
+} catch (e) {}
+
+try {
   db.prepare(`CREATE TABLE IF NOT EXISTS daily_scores (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT,

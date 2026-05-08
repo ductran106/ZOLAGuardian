@@ -99,6 +99,19 @@ async function sendTelegramJson(token, method, body) {
   return j;
 }
 
+async function sendTelegramMultipart(token, method, formData) {
+  const url = `https://api.telegram.org/bot${encodeURIComponent(token)}/${method}`;
+  const r = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) {
+    throw new Error(j.description || `${method} HTTP ${r.status}`);
+  }
+  return j;
+}
+
 /**
  * Gửi tin nhắn text đầy đủ.
  */
@@ -118,5 +131,44 @@ export async function sendTelegramEvidence(config, { plainText }) {
     log("Đã gửi tin nhắn text Telegram");
   } catch (e) {
     log(`sendMessage FAIL: ${e.message}`);
+  }
+}
+
+/**
+ * Gửi file DOCX lên Telegram chat vận hành.
+ * @returns {Promise<{sent:boolean, reason?:string}>}
+ */
+export async function sendTelegramDocument(config, { filename, buffer, caption }) {
+  const token = String(config.telegramBotToken || "").trim();
+  const chatId = String(config.telegramChatId || "").trim();
+  if (!token || !chatId) {
+    return { sent: false, reason: "telegram_not_configured" };
+  }
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return { sent: false, reason: "docx_buffer_empty" };
+  }
+
+  const safeName = String(filename || "quote_export.docx")
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .trim();
+  const docName = safeName || "quote_export.docx";
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  if (caption) form.set("caption", String(caption).slice(0, 1024));
+  form.set(
+    "document",
+    new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }),
+    docName
+  );
+
+  try {
+    await sendTelegramMultipart(token, "sendDocument", form);
+    log(`Đã gửi DOCX Telegram: ${docName}`);
+    return { sent: true };
+  } catch (e) {
+    log(`sendDocument FAIL: ${e.message}`);
+    return { sent: false, reason: e.message || "send_document_failed" };
   }
 }

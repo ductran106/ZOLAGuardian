@@ -3,10 +3,129 @@
 // Đây là cầu nối duy nhất giữa zca-js và phần còn lại của hệ thống
 
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import eventBus from "./eventBus.js";
 import db from "./db.js";
+import { sendTelegramEvidence, timeLabelGMT7 } from "../modules/guardian/telegramNotify.js";
+import { shouldSkipWatchdogForQuietHours } from "./watchdogQuiet.js";
 
 let api = null;
+let watchdogTimer = null;
+let lastMessageAt = 0;
+let watchdogRestarting = false;
+let watchdogLastAlertAt = 0;
+let watchdogConsecutiveFailures = 0;
+
+const WATCHDOG_SILENCE_MS = 5 * 60 * 1000;
+const WATCHDOG_TICK_MS = 30 * 1000;
+const WATCHDOG_MAX_CONSECUTIVE_FAILURES = 3;
+
+function clearWatchdog() {
+  if (watchdogTimer) clearInterval(watchdogTimer);
+  watchdogTimer = null;
+  lastMessageAt = 0;
+  watchdogRestarting = false;
+  watchdogLastAlertAt = 0;
+  watchdogConsecutiveFailures = 0;
+}
+
+async function sendWatchdogAlert(config, plainText) {
+  await sendTelegramEvidence(config, { plainText });
+}
+
+function restartCurrentProcess(log) {
+  try {
+    const child = spawn(process.execPath, ["index.js"], {
+      cwd: process.cwd(),
+      env: process.env,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    log(`Watchdog tầng 2: đã spawn process mới pid=${child.pid}`);
+  } catch (e) {
+    const em = e instanceof Error ? e.message : String(e);
+    log(`Watchdog tầng 2: spawn process mới FAIL: ${em}`);
+  } finally {
+    setTimeout(() => process.exit(2), 300);
+  }
+}
+
+function startWatchdog(config, log) {
+  clearWatchdog();
+  lastMessageAt = Date.now();
+  watchdogTimer = setInterval(async () => {
+    if (!api || !api.listener) return;
+    if (watchdogRestarting) return;
+    const now = Date.now();
+    if (shouldSkipWatchdogForQuietHours(now)) {
+      return;
+    }
+    const silentMs = now - lastMessageAt;
+    if (silentMs < WATCHDOG_SILENCE_MS) return;
+    if (watchdogLastAlertAt && now - watchdogLastAlertAt < WATCHDOG_SILENCE_MS) return;
+    watchdogLastAlertAt = now;
+    watchdogRestarting = true;
+    const silentMin = Math.floor(silentMs / 60000);
+    try {
+      log(`Watchdog: không có message mới ${silentMin} phút, thử restart listener...`);
+      await sendWatchdogAlert(
+        config,
+        [
+          "⚠️ [GUARDIAN] Zalo listener im lặng > 5 phút",
+          `Thời gian cảnh báo: ${timeLabelGMT7(now)}`,
+          `Silent: ~${silentMin} phút`,
+          "Hành động: tự động restart listener.",
+        ].join("\n")
+      );
+      if (typeof api.listener.stop === "function") {
+        api.listener.stop();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      api.listener.start();
+      lastMessageAt = Date.now();
+      watchdogConsecutiveFailures = 0;
+      log("Watchdog: restart listener thành công.");
+      await sendWatchdogAlert(
+        config,
+        [
+          "✅ [GUARDIAN] Zalo listener đã được restart",
+          `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          "Trạng thái: đang chờ message mới.",
+        ].join("\n")
+      );
+    } catch (e) {
+      const em = e instanceof Error ? e.message : String(e);
+      watchdogConsecutiveFailures += 1;
+      log(`Watchdog: restart listener FAIL: ${em}`);
+      await sendWatchdogAlert(
+        config,
+        [
+          "❌ [GUARDIAN] Zalo listener restart thất bại",
+          `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          `Lỗi: ${em}`,
+          "Cần kiểm tra thủ công tiến trình / credentials / kết nối mạng.",
+        ].join("\n")
+      );
+      if (watchdogConsecutiveFailures >= WATCHDOG_MAX_CONSECUTIVE_FAILURES) {
+        const criticalText = [
+          "🛑 [GUARDIAN][CRITICAL] Watchdog thất bại nhiều lần",
+          `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          `Số lần restart lỗi liên tiếp: ${watchdogConsecutiveFailures}`,
+          "Hành động: restart toàn bộ process để tự phục hồi.",
+        ].join("\n");
+        await sendWatchdogAlert(config, criticalText);
+        log("Watchdog: kích hoạt tầng 2 - restart toàn process.");
+        restartCurrentProcess(log);
+      }
+    } finally {
+      watchdogRestarting = false;
+    }
+  }, WATCHDOG_TICK_MS);
+  if (typeof watchdogTimer.unref === "function") {
+    watchdogTimer.unref();
+  }
+}
 
 export async function startZalo(config) {
   const log = (msg) => console.log(`[${new Date().toISOString()}] [zalo] ${msg}`);
@@ -33,6 +152,7 @@ export async function startZalo(config) {
 
   // Đăng ký listeners
   api.listener.on("message", (msg) => {
+    lastMessageAt = Date.now();
     const msgGroupId = msg.data?.idTo || msg.idTo || "";
     log(`MSG from group: ${msgGroupId}`);
 
@@ -92,6 +212,7 @@ export async function startZalo(config) {
 
   api.listener.start();
   log("Listener started.");
+  startWatchdog(config, log);
 
   // Cache tên groups (chỉ cache watched groups + batch để tránh lỗi API)
   try {
@@ -126,6 +247,7 @@ export function getApi() {
  */
 export function stopZalo() {
   if (!api) return;
+  clearWatchdog();
   try {
     if (api.listener && typeof api.listener.stop === "function") {
       api.listener.stop();

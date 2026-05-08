@@ -9,6 +9,8 @@
 //   DM_ADMIN_ID            — user id admin nhận DM Zalo
 //   TELEGRAM_BOT_TOKEN     — BotFather
 //   TELEGRAM_CHAT_ID       — chat / nhóm Telegram nhận chứng minh
+//   WATCHDOG_QUIET_START  — mặc định "23:00" (GMT+7) khi nhóm inherit
+//   WATCHDOG_QUIET_END     — mặc định "05:00" (GMT+7)
 //   WEBUI_BASIC_USER       — Basic Auth cho Web UI (tùy chọn)
 //   WEBUI_BASIC_PASSWORD
 //
@@ -95,6 +97,11 @@ export function loadConfig() {
   const webuiBasicPassword =
     str(e.WEBUI_BASIC_PASSWORD) ?? str(base.webuiBasicPassword);
 
+  const watchdogQuietStart =
+    str(e.WATCHDOG_QUIET_START) ?? str(base.watchdogQuietStart) ?? "23:00";
+  const watchdogQuietEnd =
+    str(e.WATCHDOG_QUIET_END) ?? str(base.watchdogQuietEnd) ?? "05:00";
+
   return {
     ...base,
     credentialsPath: credentialsPath ?? "",
@@ -105,5 +112,7 @@ export function loadConfig() {
     telegramChatId: telegramChatId ?? "",
     webuiBasicUser: webuiBasicUser ?? "",
     webuiBasicPassword: webuiBasicPassword ?? "",
+    watchdogQuietStart,
+    watchdogQuietEnd,
   };
 }

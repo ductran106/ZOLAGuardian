@@ -209,6 +209,10 @@ export async function sendUndoNotice(
   undoType = "MESSAGE_RECALLED_SELF",
   undoCountToday
 ) {
+  if (undoType === "MESSAGE_DELETED_BY_ADMIN") {
+    // Yêu cầu vận hành: admin xóa tin người khác thì không thông báo lên room.
+    return;
+  }
   const raw = String(content ?? "");
   const hasOkVariant = /(^|[^a-z0-9])(?:[o0]+k+)+(?:[^a-z0-9]|$)/i.test(
     raw.normalize("NFKC")

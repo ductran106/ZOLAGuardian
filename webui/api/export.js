@@ -5,6 +5,8 @@ import {
   buildQuoteDocxBuffer,
   safeExportFilename,
 } from "../lib/quoteDocxBuild.js";
+import { loadConfig } from "../../core/loadConfig.js";
+import { sendTelegramDocument } from "../../modules/guardian/telegramNotify.js";
 
 const router = Router();
 
@@ -104,7 +106,12 @@ const QUOTE_DOCX_BAD = new Set([
 // GET /api/export/quote-docx?date=YYYY-MM-DD&time_start=HH:MM&time_end=HH:MM&group_id=...
 router.get("/quote-docx", async (req, res) => {
   try {
-    const buf = await buildQuoteDocxBuffer(db, req.query);
+    const cfg = loadConfig();
+    const qq = {
+      ...req.query,
+      bot_user_id: String(cfg.botUserId || "").trim(),
+    };
+    const buf = await buildQuoteDocxBuffer(db, qq);
     const fn = safeExportFilename(
       String(req.query.date || "export"),
       String(req.query.group_id || "group")
@@ -125,6 +132,42 @@ router.get("/quote-docx", async (req, res) => {
     }
     console.error("[export] quote-docx", e);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/export/quote-docx/send-telegram
+// body: { date, time_start, time_end, group_id, at_all_scope? }
+router.post("/quote-docx/send-telegram", async (req, res) => {
+  try {
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const config = loadConfig();
+    const payloadWithBot = {
+      ...payload,
+      bot_user_id: String(config.botUserId || "").trim(),
+    };
+    const buf = await buildQuoteDocxBuffer(db, payloadWithBot);
+    const fn = safeExportFilename(
+      String(payload.date || "export"),
+      String(payload.group_id || "group")
+    );
+    const sent = await sendTelegramDocument(config, {
+      filename: fn,
+      buffer: Buffer.from(buf),
+      caption: `DOCX export ${String(payload.date || "")} · ${String(payload.group_id || "")}`,
+    });
+    if (!sent.sent) {
+      const reason = String(sent.reason || "telegram_send_failed");
+      const status = reason === "telegram_not_configured" ? 400 : 500;
+      return res.status(status).json({ ok: false, error: reason });
+    }
+    return res.json({ ok: true, sent: true, filename: fn });
+  } catch (e) {
+    const code = String(e.message || "");
+    if (QUOTE_DOCX_BAD.has(code)) {
+      return res.status(400).json({ ok: false, error: code });
+    }
+    console.error("[export] quote-docx/send-telegram", e);
+    return res.status(500).json({ ok: false, error: code || "send_failed" });
   }
 });
 

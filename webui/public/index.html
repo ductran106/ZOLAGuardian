@@ -50,44 +50,52 @@
     </section>
 
     <section class="panel panel-docx-export" aria-label="Xuất DOCX cụm quote">
-      <div class="section-header score-job-head">
+      <div class="section-header">
         <h2>📄 Xuất DOCX (cụm quote + admin @All)</h2>
         <p class="hint docx-hint">
-          Khung giờ theo <strong>Asia/Ho_Chi_Minh</strong>. Định dạng dòng tương thích
-          <code>vibecode-docx-processor</code>. Tin cha ngoài khung có <code>*Missing*</code> trong nội dung.
-          Khối @All: mặc định <strong>mọi tin có @All</strong> trong khung giờ (không chỉ admin trong DB).
-          <strong>Danh sách theo dõi xuất DOCX</strong> (lưu trong DB, không phụ thuộc Shield) luôn hiển thị bên dưới; cột phải mỗi dòng là <strong>thời điểm tin mới nhất</strong> đã có trong DB (cache listener).
-          Nút <strong>Đồng bộ nhóm Zalo (tất cả…)</strong> kéo toàn bộ nhóm tài khoản đang tham gia vào ô chọn (cần Zalo đã đăng nhập).
+          Khung giờ theo <strong>Asia/Ho_Chi_Minh</strong>. Danh sách theo dõi DOCX lưu trong DB, độc lập với Shield.
+          Cột thời gian ở panel theo dõi là <strong>tin mới nhất đã cache</strong> của nhóm trong DB.
         </p>
-        <div class="controls score-job-controls docx-controls">
-          <label class="docx-label">Ngày <input type="date" id="export-docx-date" /></label>
-          <label class="docx-label">Từ <input type="time" id="export-docx-start" step="60" value="00:00" /></label>
-          <label class="docx-label">Đến <input type="time" id="export-docx-end" step="60" value="23:59" /></label>
-          <div class="docx-group-block">
-            <label class="docx-label docx-group-select-label" for="export-docx-group">Nhóm</label>
+      </div>
+      <div class="docx-layout">
+        <div class="docx-main">
+          <div class="controls score-job-controls docx-controls">
+            <label class="docx-label">Ngày <input type="date" id="export-docx-date" /></label>
+            <label class="docx-label">Từ <input type="time" id="export-docx-start" step="60" value="00:00" /></label>
+            <label class="docx-label">Đến <input type="time" id="export-docx-end" step="60" value="23:59" /></label>
+            <label class="docx-label docx-group-select-label" for="export-docx-group">Nhóm cần xuất</label>
             <select id="export-docx-group" class="docx-group-select" aria-label="Nhóm">
               <option value="">— Chọn nhóm —</option>
             </select>
-            <div class="docx-group-actions">
-              <button type="button" id="export-docx-add-tracked" class="btn secondary docx-add-tracked-btn">
-                ➕ Thêm nhóm (ô trên) vào theo dõi xuất DOCX
-              </button>
-              <button type="button" id="export-docx-sync-all-groups" class="btn secondary docx-sync-all-btn">
-                Đồng bộ nhóm Zalo (tất cả nhóm đang tham gia)
-              </button>
-            </div>
-            <div
-              id="export-docx-watched-panel"
-              class="docx-watched-panel"
-              aria-live="polite"
-            ></div>
+            <label class="docx-label docx-checkbox">
+              <input type="checkbox" id="export-docx-atall-admin-only" />
+              Chỉ @All của admin (watch_groups)
+            </label>
           </div>
-          <label class="docx-label docx-checkbox">
-            <input type="checkbox" id="export-docx-atall-admin-only" />
-            Chỉ @All của admin (watch_groups)
-          </label>
-          <button type="button" class="btn primary" onclick="exportQuoteDocx()">⬇️ Tải DOCX</button>
+          <div class="docx-cta-row">
+            <button type="button" class="btn primary" onclick="exportQuoteDocx()">⬇️ Tải DOCX</button>
+            <button type="button" id="export-docx-send-telegram" class="btn secondary" onclick="sendQuoteDocxToTelegram()">📨 Gửi DOCX</button>
+          </div>
         </div>
+        <aside class="docx-side" aria-label="Quản lý theo dõi DOCX">
+          <h3 class="docx-side-title">Theo dõi nhóm xuất DOCX</h3>
+          <div class="docx-group-actions">
+            <button type="button" id="export-docx-add-tracked" class="btn secondary docx-add-tracked-btn">
+              ➕ Thêm nhóm đang chọn
+            </button>
+            <button type="button" id="export-docx-sync-all-groups" class="btn secondary docx-sync-all-btn">
+              Đồng bộ tất cả nhóm từ Zalo
+            </button>
+          </div>
+          <div
+            id="export-docx-watched-panel"
+            class="docx-watched-panel"
+            aria-live="polite"
+          ></div>
+        </aside>
+      </div>
+      <div class="docx-footnote">
+        <span>Tip:</span> nếu nhóm chưa có cache tin trong DB, hãy để listener chạy thêm trước khi xuất.
       </div>
     </section>
 
@@ -124,6 +132,20 @@
         UID trong ô <strong>Miễn kiểm spam</strong> không đồng bộ từ Zalo — chỉnh tay sau khi gỡ quyền trên app.
         Luật lặp tin: vi phạm khi <code>repeatThreshold</code> tin giống nhau trong <code>repeatWindowSeconds</code> giây, hoặc <code>repeatConsecutiveThreshold</code> tin liền nhau cùng 1 người.
       </p>
+      <details class="watchdog-global-details">
+        <summary>Giờ nghỉ watchdog — mặc định (GMT+7)</summary>
+        <p class="hint muted watchdog-global-hint">
+          Dùng cho nhóm chọn «Giống mặc định». Bot đọc lại config ~30 giây/lần — không cần restart.
+          Chỉ khi <strong>mọi</strong> nhóm Shield bật đều đang trong khung nghỉ của riêng nhóm đó thì watchdog mới bỏ qua kiểm tra im lặng.
+        </p>
+        <div class="watchdog-global-controls">
+          <label>Từ <input type="time" id="watchdog-default-start" step="60" /></label>
+          <label>Đến <input type="time" id="watchdog-default-end" step="60" /></label>
+          <button type="button" id="watchdog-default-save" class="btn secondary">
+            Lưu mặc định
+          </button>
+        </div>
+      </details>
       <div id="groups-sync-msg" class="msg" hidden></div>
       <div id="groups-list" class="groups-list"></div>
     </section>

@@ -629,6 +629,9 @@ function renderGroupCards(items) {
           <span>${escapeHtml(VIOLATION_LABELS[t] || t)}</span>
         </label>`;
     }).join("");
+    const wmode = String(g.watchdog_quiet_mode || "inherit").toLowerCase();
+    const wstart = normalizeTimeInputValue(g.watchdog_quiet_start || "23:00");
+    const wend = normalizeTimeInputValue(g.watchdog_quiet_end || "05:00");
     row.innerHTML = `
         <div class="group-card-top">
           <div class="group-meta">
@@ -647,6 +650,26 @@ function renderGroupCards(items) {
           <summary class="group-extra-summary">Bật/tắt vi phạm theo room</summary>
           <div class="vio-rules-grid">${togglesHtml}</div>
           <button type="button" class="btn-mini primary save-rules-btn">Lưu rule vi phạm</button>
+        </details>
+        <details class="group-extra-box">
+          <summary class="group-extra-summary">Giờ nghỉ watchdog (GMT+7)</summary>
+          <p class="hint muted small watchdog-quiet-hint">
+            Khung im lặng cho riêng nhóm này. «Không nghỉ» = nhóm luôn được tính là cần có tin — watchdog không bị tắt chỉ vì nhóm này đêm khuya.
+          </p>
+          <div class="watchdog-quiet-row">
+            <label class="watchdog-quiet-label">Chế độ
+              <select class="watchdog-quiet-mode">
+                <option value="inherit">Giống mặc định (config)</option>
+                <option value="custom">Tùy chỉnh</option>
+                <option value="off">Không nghỉ (luôn kiểm tra)</option>
+              </select>
+            </label>
+            <span class="watchdog-quiet-custom-wrap">
+              <label>Từ <input type="time" class="watchdog-quiet-start" step="60" value="${escapeHtml(wstart)}" /></label>
+              <label>Đến <input type="time" class="watchdog-quiet-end" step="60" value="${escapeHtml(wend)}" /></label>
+            </span>
+            <button type="button" class="btn-mini primary save-watchdog-quiet-btn">Lưu</button>
+          </div>
         </details>
         <details class="group-extra-box">
           <summary class="group-extra-summary">Miễn kiểm spam (admin)</summary>
@@ -717,6 +740,50 @@ function renderGroupCards(items) {
         saveAdmins.disabled = false;
       }
     });
+    const modeSel = row.querySelector(".watchdog-quiet-mode");
+    const customWrap = row.querySelector(".watchdog-quiet-custom-wrap");
+    const startInp = row.querySelector(".watchdog-quiet-start");
+    const endInp = row.querySelector(".watchdog-quiet-end");
+    if (modeSel) {
+      modeSel.value = ["inherit", "custom", "off"].includes(wmode)
+        ? wmode
+        : "inherit";
+      const syncCustom = () => {
+        const on = modeSel.value === "custom";
+        if (customWrap) customWrap.hidden = !on;
+        if (startInp) startInp.disabled = !on;
+        if (endInp) endInp.disabled = !on;
+      };
+      syncCustom();
+      modeSel.addEventListener("change", syncCustom);
+    }
+    const saveWd = row.querySelector(".save-watchdog-quiet-btn");
+    saveWd?.addEventListener("click", async () => {
+      const mode = String(modeSel?.value || "inherit");
+      const body = { mode };
+      if (mode === "custom") {
+        body.watchdogQuietStart = normalizeTimeInputValue(startInp?.value);
+        body.watchdogQuietEnd = normalizeTimeInputValue(endInp?.value);
+      }
+      saveWd.disabled = true;
+      try {
+        await fetchJSON(
+          `/api/groups/${encodeURIComponent(id)}/watchdog-quiet`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        toast("Đã lưu giờ nghỉ watchdog nhóm.");
+        await loadGroups();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        saveWd.disabled = false;
+      }
+    });
+
     const saveRules = row.querySelector(".save-rules-btn");
     saveRules?.addEventListener("click", async () => {
       const ruleInputs = [...row.querySelectorAll(".vio-rule-toggle")];
@@ -740,6 +807,29 @@ function renderGroupCards(items) {
       }
     });
     root.appendChild(row);
+  }
+}
+
+function normalizeTimeInputValue(s) {
+  const t = String(s ?? "").trim();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t);
+  if (!m) return "23:00";
+  const hh = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+  const mm = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+async function loadWatchdogDefaults() {
+  const st = document.getElementById("watchdog-default-start");
+  const en = document.getElementById("watchdog-default-end");
+  if (!st || !en) return;
+  try {
+    const j = await fetchJSON("/api/settings/watchdog-quiet");
+    st.value = normalizeTimeInputValue(j.watchdogQuietStart);
+    en.value = normalizeTimeInputValue(j.watchdogQuietEnd);
+  } catch {
+    st.value = "23:00";
+    en.value = "05:00";
   }
 }
 
@@ -1147,6 +1237,7 @@ async function loadAll() {
     loadGroups(),
     loadViolations(),
     loadSpamLists(),
+    loadWatchdogDefaults(),
   ]);
 }
 
@@ -1330,6 +1421,45 @@ function exportQuoteDocx() {
   window.location.href = url;
 }
 
+async function sendQuoteDocxToTelegram() {
+  const date = document.getElementById("export-docx-date")?.value || "";
+  const timeStart = document.getElementById("export-docx-start")?.value || "";
+  const timeEnd = document.getElementById("export-docx-end")?.value || "";
+  const groupId = document.getElementById("export-docx-group")?.value || "";
+  const btn = document.getElementById("export-docx-send-telegram");
+  if (!date) {
+    toast("Chọn ngày xuất.", true);
+    return;
+  }
+  if (!groupId) {
+    toast("Chọn nhóm.", true);
+    return;
+  }
+  const norm = (t) => (t && t.length === 5 ? `${t}:00` : t);
+  const body = {
+    date,
+    time_start: norm(timeStart) || "00:00:00",
+    time_end: norm(timeEnd) || "23:59:59",
+    group_id: groupId,
+  };
+  if (document.getElementById("export-docx-atall-admin-only")?.checked) {
+    body.at_all_scope = "admin";
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const j = await fetchJSON("/api/export/quote-docx/send-telegram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast(`Đã gửi Telegram: ${j.filename || "DOCX"}`);
+  } catch (e) {
+    toast(`Gửi Telegram thất bại: ${e.message}`, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const today = new Date().toISOString().slice(0, 10);
   const sd = document.getElementById("score-date");
@@ -1382,4 +1512,30 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   void refreshDocxWatchedPanel();
+
+  document.getElementById("watchdog-default-save")?.addEventListener(
+    "click",
+    async () => {
+      const btn = document.getElementById("watchdog-default-save");
+      const st = document.getElementById("watchdog-default-start");
+      const en = document.getElementById("watchdog-default-end");
+      if (!st || !en) return;
+      if (btn) btn.disabled = true;
+      try {
+        await fetchJSON("/api/settings/watchdog-quiet", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            watchdogQuietStart: normalizeTimeInputValue(st.value),
+            watchdogQuietEnd: normalizeTimeInputValue(en.value),
+          }),
+        });
+        toast("Đã lưu giờ nghỉ watchdog mặc định.");
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+  );
 });
