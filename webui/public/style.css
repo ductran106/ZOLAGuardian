@@ -1274,3 +1274,115 @@ select.docx-group-select {
     flex: 1 1 180px;
   }
 }
+
+/* ── System Health (Phase 1) ───────────────────────────────────────────── */
+.panel-health .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.health-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.health-refreshed {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.6rem;
+}
+
+.health-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.health-card.err {
+  border-color: rgba(224, 49, 49, 0.55);
+  color: #ffc9c9;
+}
+
+.health-card.muted {
+  color: var(--muted);
+}
+
+.health-card-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+.health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+  border-bottom: 1px dashed rgba(138, 147, 168, 0.15);
+  padding: 0.18rem 0;
+}
+
+.health-row:last-child {
+  border-bottom: none;
+}
+
+.health-label {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.health-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.health-row.row-ok .health-val { color: #b2f2bb; }
+.health-row.row-warn .health-val { color: #ffd43b; }
+.health-row.row-err .health-val { color: #ffa8a8; }
+
+.badge.ok {
+  border-color: rgba(47, 158, 68, 0.55);
+  color: #b2f2bb;
+}
+
+.badge.warn {
+  border-color: rgba(255, 212, 59, 0.55);
+  color: #ffd43b;
+}
+
+.badge.err {
+  border-color: rgba(224, 49, 49, 0.55);
+  color: #ffa8a8;
+}
+
+.health-raw-details {
+  margin-top: 0.6rem;
+}
+
+.health-raw {
+  background: #0e101a;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.74rem;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

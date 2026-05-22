@@ -302,6 +302,26 @@ export function getApi() {
 }
 
 /**
+ * Read-only snapshot dùng cho /api/health/full.
+ * Không expose tham chiếu mutable; mọi field đều JSON-safe.
+ */
+export function getWatchdogState() {
+  return {
+    lastAnyMessageAt: lastAnyMessageAt || 0,
+    lastWatchedMessageAt: lastWatchedMessageAt || 0,
+    lastWatchedGroupId: lastWatchedGroupId || "",
+    watchdogRestarting: !!watchdogRestarting,
+    watchdogLastAlertAt: watchdogLastAlertAt || 0,
+    watchdogConsecutiveFailures: Number(watchdogConsecutiveFailures || 0),
+    listenerLikelyDown: !!listenerLikelyDown,
+    watchdogActive: !!watchdogTimer,
+    silenceThresholdMs: WATCHDOG_SILENCE_MS,
+    tickMs: WATCHDOG_TICK_MS,
+    maxConsecutiveFailures: WATCHDOG_MAX_CONSECUTIVE_FAILURES,
+  };
+}
+
+/**
  * Dừng listener WebSocket và xóa tham chiếu API (đăng xuất phía client).
  */
 export function stopZalo() {
