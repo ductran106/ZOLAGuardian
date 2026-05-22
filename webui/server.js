@@ -16,6 +16,8 @@ import jobsRouter from "./api/jobs.js";
 import exportRouter from "./api/export.js";
 import { zaloAuthRouter } from "./api/zaloAuth.js";
 import { watchdogSettingsRouter } from "./api/settingsWatchdog.js";
+import { healthRouter } from "./api/health.js";
+import { runtimeBuildRouter } from "./api/runtimeBuild.js";
 import {
   isWebUiAuthConfigured,
   verifyBasicAuth,
@@ -39,6 +41,8 @@ export function startWebUI(config) {
   app.use("/api/export", exportRouter);
   app.use("/api/zalo", zaloAuthRouter);
   app.use("/api/settings/watchdog-quiet", watchdogSettingsRouter);
+  app.use("/api/health/full", healthRouter);
+  app.use("/api/runtime/build", runtimeBuildRouter);
   app.use(express.static(path.join(__dirname, "public")));
 
   const server = createServer(app);

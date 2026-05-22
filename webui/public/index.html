@@ -49,6 +49,27 @@
       </details>
     </section>
 
+    <section class="panel panel-health" aria-label="System Health">
+      <div class="section-header">
+        <h2>🩺 Hệ thống</h2>
+        <div class="health-meta">
+          <span id="health-refreshed" class="muted health-refreshed">—</span>
+          <button type="button" id="health-refresh-btn" class="btn secondary tight">Làm mới</button>
+        </div>
+      </div>
+      <p class="hint">
+        Quan sát process, DB, Zalo listener và watchdog. Tự động làm mới mỗi 30 giây.
+        Dùng cho ops/debug — không thay đổi runtime.
+      </p>
+      <div id="health-grid" class="health-grid">
+        <div class="health-card muted">Đang tải…</div>
+      </div>
+      <details class="health-raw-details">
+        <summary>Raw JSON (debug)</summary>
+        <pre id="health-raw" class="health-raw">—</pre>
+      </details>
+    </section>
+
     <section class="panel panel-docx-export" aria-label="Xuất DOCX cụm quote">
       <div class="section-header">
         <h2>📄 Xuất DOCX (cụm quote + admin @All)</h2>

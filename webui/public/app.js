@@ -1231,6 +1231,231 @@ async function loadViolations() {
   }
 }
 
+// ── System Health (Phase 1) ─────────────────────────────────────────────
+function formatBytes(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatDuration(sec) {
+  const s = Number(sec);
+  if (!Number.isFinite(s) || s < 0) return "—";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function formatTsMaybe(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return formatLookupTs(n);
+}
+
+function healthRow(label, value, status) {
+  const cls = status ? ` row-${status}` : "";
+  return `<div class="health-row${cls}"><span class="health-label">${escapeHtml(
+    label
+  )}</span><span class="health-val">${value}</span></div>`;
+}
+
+function renderHealth(h, build) {
+  const grid = document.getElementById("health-grid");
+  if (!grid) return;
+  if (!h || h.ok === false) {
+    grid.innerHTML = `<div class="health-card err">Lỗi: ${escapeHtml(
+      String(h?.error || "Không tải được /api/health/full")
+    )}</div>`;
+    return;
+  }
+  const proc = h.process || {};
+  const dbH = h.db || {};
+  const cfg = h.config || {};
+  const zalo = h.zalo || {};
+  const wd = (zalo && zalo.watchdog) || {};
+  const dbOk = dbH.ok === true;
+  const zaloOk = zalo.connected === true;
+  const listenerDownStatus = wd.listenerLikelyDown ? "warn" : "ok";
+
+  const buildIdent = build && build.ok !== false
+    ? `${escapeHtml(String(build.name || "?"))}@${escapeHtml(
+        String(build.version || "?")
+      )} <code class="subtle">${escapeHtml(
+        String(build.commit ? build.commit.slice(0, 12) : "no-commit")
+      )}</code> <span class="muted">[${escapeHtml(String(build.source || "?"))}]</span>${
+        build.branch ? ` <span class="muted">${escapeHtml(String(build.branch))}</span>` : ""
+      }${
+        build.deployedAt
+          ? ` <span class="muted">· deployed ${escapeHtml(String(build.deployedAt))}</span>`
+          : ""
+      }`
+    : '<span class="muted">—</span>';
+
+  const processCard = [
+    `<h3 class="health-card-title">Process</h3>`,
+    healthRow("Host / PID", `${escapeHtml(String(proc.hostname || "—"))} · ${escapeHtml(String(proc.pid || "—"))}`),
+    healthRow("Node", escapeHtml(String(proc.node || "—"))),
+    healthRow("Uptime", escapeHtml(formatDuration(proc.uptimeSec))),
+    healthRow("Started", escapeHtml(String(proc.startedAt || "—"))),
+    healthRow(
+      "Memory (RSS / heap)",
+      `${escapeHtml(formatBytes(proc.memory?.rss))} / ${escapeHtml(
+        formatBytes(proc.memory?.heapUsed)
+      )}`
+    ),
+    healthRow("Load avg (1/5/15)", escapeHtml(
+      Array.isArray(proc.loadAvg)
+        ? proc.loadAvg.map((v) => Number(v).toFixed(2)).join(" · ")
+        : "—"
+    )),
+  ].join("");
+
+  const configCard = [
+    `<h3 class="health-card-title">Config</h3>`,
+    healthRow("Web UI port", escapeHtml(String(cfg.webuiPort || "—"))),
+    healthRow(
+      "Skip Zalo",
+      cfg.skipZalo
+        ? '<span class="badge warn">ON</span>'
+        : '<span class="badge ok">off</span>'
+    ),
+    healthRow(
+      "Basic Auth",
+      cfg.basicAuthEnabled
+        ? '<span class="badge ok">ON</span>'
+        : '<span class="badge">off</span>'
+    ),
+    healthRow(
+      "Telegram",
+      cfg.hasTelegram
+        ? '<span class="badge ok">configured</span>'
+        : '<span class="badge">not set</span>'
+    ),
+    healthRow(
+      "Quiet hours",
+      `${escapeHtml(String(cfg.watchdogQuietStart || "—"))} → ${escapeHtml(
+        String(cfg.watchdogQuietEnd || "—")
+      )}`
+    ),
+    healthRow(
+      "Credentials path",
+      cfg.credentialsPathConfigured
+        ? '<span class="badge ok">set</span>'
+        : '<span class="badge warn">missing</span>'
+    ),
+  ].join("");
+
+  const dbCard = [
+    `<h3 class="health-card-title">Database</h3>`,
+    healthRow(
+      "Connection",
+      dbOk
+        ? '<span class="badge ok">OK</span>'
+        : `<span class="badge err">FAIL</span>${
+            dbH.probeError ? ` <code class="subtle">${escapeHtml(String(dbH.probeError))}</code>` : ""
+          }`,
+      dbOk ? "ok" : "err"
+    ),
+    healthRow("Messages", escapeHtml(String(dbH.messagesTotal ?? "—"))),
+    healthRow("Last message ts", escapeHtml(formatTsMaybe(dbH.lastMessageTs))),
+    healthRow(
+      "Watch groups (enabled / total)",
+      `${escapeHtml(String(dbH.watchGroupsEnabled ?? "—"))} / ${escapeHtml(
+        String(dbH.watchGroupsTotal ?? "—")
+      )}`
+    ),
+    healthRow(
+      "Violations (24h / total)",
+      `${escapeHtml(String(dbH.violationsLast24h ?? "—"))} / ${escapeHtml(
+        String(dbH.violationsTotal ?? "—")
+      )}`
+    ),
+  ].join("");
+
+  const zaloCard = [
+    `<h3 class="health-card-title">Zalo · Watchdog</h3>`,
+    healthRow(
+      "Connected",
+      zaloOk
+        ? '<span class="badge ok">YES</span>'
+        : '<span class="badge">no</span>',
+      zaloOk ? "ok" : null
+    ),
+    healthRow("Own ID", escapeHtml(String(zalo.ownId || "—"))),
+    healthRow(
+      "Listener likely down",
+      wd.listenerLikelyDown
+        ? '<span class="badge warn">YES</span>'
+        : '<span class="badge ok">no</span>',
+      listenerDownStatus
+    ),
+    healthRow(
+      "Last any msg",
+      escapeHtml(formatTsMaybe(wd.lastAnyMessageAt))
+    ),
+    healthRow(
+      "Last watched msg",
+      escapeHtml(formatTsMaybe(wd.lastWatchedMessageAt))
+    ),
+    healthRow(
+      "Last watched group",
+      escapeHtml(String(wd.lastWatchedGroupId || "—"))
+    ),
+    healthRow(
+      "Watchdog timer",
+      wd.watchdogActive
+        ? '<span class="badge ok">active</span>'
+        : '<span class="badge">idle</span>'
+    ),
+    healthRow(
+      "Consecutive failures",
+      escapeHtml(String(wd.watchdogConsecutiveFailures ?? "—"))
+    ),
+  ].join("");
+
+  const buildCard = [
+    `<h3 class="health-card-title">Build</h3>`,
+    healthRow("Identity", buildIdent),
+  ].join("");
+
+  grid.innerHTML = [processCard, dbCard, zaloCard, configCard, buildCard]
+    .map((html) => `<div class="health-card">${html}</div>`)
+    .join("");
+
+  const raw = document.getElementById("health-raw");
+  if (raw) raw.textContent = JSON.stringify({ health: h, build }, null, 2);
+
+  const ref = document.getElementById("health-refreshed");
+  if (ref) ref.textContent = `Cập nhật: ${formatLookupTs(Date.now())}`;
+}
+
+async function loadHealthFull() {
+  let h = null;
+  let build = null;
+  try {
+    h = await fetchJSON("/api/health/full");
+  } catch (e) {
+    h = { ok: false, error: e.message };
+  }
+  try {
+    build = await fetchJSON("/api/runtime/build");
+  } catch (e) {
+    build = { ok: false, error: e.message };
+  }
+  renderHealth(h, build);
+}
+
+document
+  .getElementById("health-refresh-btn")
+  ?.addEventListener("click", () => loadHealthFull());
+
 async function loadAll() {
   await Promise.all([
     loadStatus(),
@@ -1238,6 +1463,7 @@ async function loadAll() {
     loadViolations(),
     loadSpamLists(),
     loadWatchdogDefaults(),
+    loadHealthFull(),
   ]);
 }
 
