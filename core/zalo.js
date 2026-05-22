@@ -4,17 +4,29 @@
 
 import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import os from "node:os";
 import eventBus from "./eventBus.js";
 import db from "./db.js";
+import { upsertInboundGroupMessage } from "./inboundMessageCache.js";
 import { sendTelegramEvidence, timeLabelGMT7 } from "../modules/guardian/telegramNotify.js";
 import { shouldSkipWatchdogForQuietHours } from "./watchdogQuiet.js";
 
 let api = null;
 let watchdogTimer = null;
-let lastMessageAt = 0;
+let lastAnyMessageAt = 0;
+let lastWatchedMessageAt = 0;
+let lastWatchedGroupId = "";
 let watchdogRestarting = false;
 let watchdogLastAlertAt = 0;
 let watchdogConsecutiveFailures = 0;
+let listenerLikelyDown = false;
+
+const getEnabledWatchGroupStmt = db.prepare(
+  "SELECT 1 FROM watch_groups WHERE group_id = ? AND enabled = 1 LIMIT 1"
+);
+const countEnabledWatchGroupsStmt = db.prepare(
+  "SELECT COUNT(*) AS c FROM watch_groups WHERE enabled = 1"
+);
 
 const WATCHDOG_SILENCE_MS = 5 * 60 * 1000;
 const WATCHDOG_TICK_MS = 30 * 1000;
@@ -23,10 +35,27 @@ const WATCHDOG_MAX_CONSECUTIVE_FAILURES = 3;
 function clearWatchdog() {
   if (watchdogTimer) clearInterval(watchdogTimer);
   watchdogTimer = null;
-  lastMessageAt = 0;
+  lastAnyMessageAt = 0;
+  lastWatchedMessageAt = 0;
+  lastWatchedGroupId = "";
   watchdogRestarting = false;
   watchdogLastAlertAt = 0;
   watchdogConsecutiveFailures = 0;
+  listenerLikelyDown = false;
+}
+
+function isEnabledWatchGroup(groupId) {
+  const gid = String(groupId || "").trim();
+  if (!gid) return false;
+  return !!getEnabledWatchGroupStmt.get(gid);
+}
+
+function countEnabledWatchGroups() {
+  return Number(countEnabledWatchGroupsStmt.get()?.c || 0);
+}
+
+function processFingerprint() {
+  return `host=${os.hostname()} pid=${process.pid} ppid=${process.ppid}`;
 }
 
 async function sendWatchdogAlert(config, plainText) {
@@ -51,30 +80,73 @@ function restartCurrentProcess(log) {
   }
 }
 
+/**
+ * Chỉ log lỗi lifecycle của listener, KHÔNG reconnect nóng ở tầng event này.
+ * Lý do: với vài lỗi WS/event thấp tầng, việc stop/start ngay trong handler có thể
+ * kéo runtime vào vòng lặp hoặc trạng thái nửa sống. Phục hồi nên đi qua watchdog.
+ */
+function attachListenerResilience(listener, log) {
+  if (!listener?.on) return;
+
+  listener.on("error", (err) => {
+    listenerLikelyDown = true;
+    const em =
+      err instanceof Error
+        ? `${err.message}${err.code ? ` [${err.code}]` : ""}`
+        : String(err);
+    log(`Listener error (process vẫn chạy): ${em}`);
+  });
+
+  listener.on("closed", (code, reason) => {
+    listenerLikelyDown = true;
+    log(`Listener closed: code=${code} reason=${reason || ""}`);
+  });
+
+  listener.on("disconnected", (code, reason) => {
+    listenerLikelyDown = true;
+    log(`Listener disconnected: code=${code} reason=${reason || ""}`);
+  });
+}
+
 function startWatchdog(config, log) {
   clearWatchdog();
-  lastMessageAt = Date.now();
+  const now0 = Date.now();
+  lastAnyMessageAt = now0;
+  lastWatchedMessageAt = now0;
   watchdogTimer = setInterval(async () => {
     if (!api || !api.listener) return;
     if (watchdogRestarting) return;
+    if (countEnabledWatchGroups() <= 0) return;
+
     const now = Date.now();
-    if (shouldSkipWatchdogForQuietHours(now)) {
+    if (shouldSkipWatchdogForQuietHours(now) && !listenerLikelyDown) {
       return;
     }
-    const silentMs = now - lastMessageAt;
+
+    const silentMs = now - lastWatchedMessageAt;
     if (silentMs < WATCHDOG_SILENCE_MS) return;
     if (watchdogLastAlertAt && now - watchdogLastAlertAt < WATCHDOG_SILENCE_MS) return;
+
     watchdogLastAlertAt = now;
     watchdogRestarting = true;
     const silentMin = Math.floor(silentMs / 60000);
+    const anySilentSec = Math.floor((now - lastAnyMessageAt) / 1000);
+    const watchedGroupLabel = lastWatchedGroupId || "[chưa có nhóm watch nào ghi nhận]";
+    const fingerprint = processFingerprint();
+
     try {
-      log(`Watchdog: không có message mới ${silentMin} phút, thử restart listener...`);
+      log(
+        `Watchdog: nhóm watch im lặng ${silentMin} phút, thử restart listener... lastWatchedGroup=${watchedGroupLabel} ${fingerprint}`
+      );
       await sendWatchdogAlert(
         config,
         [
           "⚠️ [GUARDIAN] Zalo listener im lặng > 5 phút",
           `Thời gian cảnh báo: ${timeLabelGMT7(now)}`,
-          `Silent: ~${silentMin} phút`,
+          `Silent(watch groups): ~${silentMin} phút`,
+          `Nhóm watch gần nhất: ${watchedGroupLabel}`,
+          `Silent(any message): ~${anySilentSec} giây`,
+          `Process: ${fingerprint}`,
           "Hành động: tự động restart listener.",
         ].join("\n")
       );
@@ -83,26 +155,29 @@ function startWatchdog(config, log) {
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
       api.listener.start();
-      lastMessageAt = Date.now();
+      lastWatchedMessageAt = Date.now();
+      listenerLikelyDown = false;
       watchdogConsecutiveFailures = 0;
-      log("Watchdog: restart listener thành công.");
+      log(`Watchdog: restart listener thành công. ${fingerprint}`);
       await sendWatchdogAlert(
         config,
         [
           "✅ [GUARDIAN] Zalo listener đã được restart",
           `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          `Process: ${fingerprint}`,
           "Trạng thái: đang chờ message mới.",
         ].join("\n")
       );
     } catch (e) {
       const em = e instanceof Error ? e.message : String(e);
       watchdogConsecutiveFailures += 1;
-      log(`Watchdog: restart listener FAIL: ${em}`);
+      log(`Watchdog: restart listener FAIL: ${em} ${fingerprint}`);
       await sendWatchdogAlert(
         config,
         [
           "❌ [GUARDIAN] Zalo listener restart thất bại",
           `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          `Process: ${fingerprint}`,
           `Lỗi: ${em}`,
           "Cần kiểm tra thủ công tiến trình / credentials / kết nối mạng.",
         ].join("\n")
@@ -111,6 +186,7 @@ function startWatchdog(config, log) {
         const criticalText = [
           "🛑 [GUARDIAN][CRITICAL] Watchdog thất bại nhiều lần",
           `Thời gian: ${timeLabelGMT7(Date.now())}`,
+          `Process: ${fingerprint}`,
           `Số lần restart lỗi liên tiếp: ${watchdogConsecutiveFailures}`,
           "Hành động: restart toàn bộ process để tự phục hồi.",
         ].join("\n");
@@ -152,9 +228,16 @@ export async function startZalo(config) {
 
   // Đăng ký listeners
   api.listener.on("message", (msg) => {
-    lastMessageAt = Date.now();
+    const now = Date.now();
+    lastAnyMessageAt = now;
+    listenerLikelyDown = false;
     const msgGroupId = msg.data?.idTo || msg.idTo || "";
-    log(`MSG from group: ${msgGroupId}`);
+    const isWatchedGroup = isEnabledWatchGroup(msgGroupId);
+    if (isWatchedGroup) {
+      lastWatchedMessageAt = now;
+      lastWatchedGroupId = String(msgGroupId || "");
+    }
+    log(`MSG from group: ${msgGroupId}${isWatchedGroup ? " [watch]" : ""}`);
 
     const gName = msg.data?.groupName || msg.groupName || "";
     if (msgGroupId && gName) {
@@ -169,36 +252,11 @@ export async function startZalo(config) {
       }
     }
 
-    // Cache tất cả messages để phục vụ UNDO lookup
-    const cacheContent = msg.data?.content || msg.content || "";
-    const cacheMsgId = msg.data?.msgId || msg.msgId || "";
-    const cacheSender = msg.data?.uidFrom || msg.uidFrom || "";
-    const cacheTs = msg.data?.ts || Date.now();
-
-    if (cacheMsgId) {
-      try {
-        const contentStr =
-          typeof cacheContent === "object"
-            ? JSON.stringify(cacheContent)
-            : String(cacheContent || "");
-        db.prepare(`
-          INSERT OR IGNORE INTO messages
-            (msg_id, group_id, user_id, display_name, content, ts,
-             quote_msg_id, quote_owner_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          cacheMsgId,
-          msgGroupId || "",
-          cacheSender || "",
-          msg.data?.dName || msg.dName || "",
-          contentStr,
-          cacheTs || Date.now(),
-          String(msg.data?.quote?.globalMsgId || "") || null,
-          String(msg.data?.quote?.ownerId || "") || null
-        );
-      } catch {
-        /* ignore */
-      }
+    // Cache tin nhóm (quote + global id) — một nguồn, xem core/inboundMessageCache.js
+    try {
+      upsertInboundGroupMessage(db, msg);
+    } catch {
+      /* ignore */
     }
 
     // Không lọc theo config.watchGroups cứng.
@@ -210,6 +268,7 @@ export async function startZalo(config) {
     eventBus.emit("zalo:undo", { api, data });
   });
 
+  attachListenerResilience(api.listener, log);
   api.listener.start();
   log("Listener started.");
   startWatchdog(config, log);

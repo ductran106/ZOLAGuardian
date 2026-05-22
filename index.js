@@ -3,11 +3,60 @@
 
 import { existsSync } from "node:fs";
 import { loadConfig } from "./core/loadConfig.js";
+import { sendTelegramEvidence, timeLabelGMT7 } from "./modules/guardian/telegramNotify.js";
 
 const config = loadConfig();
+let startupComplete = false;
+let fatalRecoveryScheduled = false;
 
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [index] ${msg}`);
+
+function scheduleFatalRecovery(reason, err) {
+  if (fatalRecoveryScheduled) return;
+  fatalRecoveryScheduled = true;
+
+  const errText = err instanceof Error ? err.stack || err.message : String(err ?? err);
+  const plainText = [
+    "🛑 [GUARDIAN][FATAL] Process gặp lỗi không bắt được sau khi boot",
+    `Thời gian: ${timeLabelGMT7(Date.now())}`,
+    `Host/PID: ${process.pid}`,
+    `Lý do: ${reason}`,
+    `Lỗi: ${errText}`,
+    "Hành động: thoát process để systemd tự khởi động lại.",
+  ].join("\n");
+
+  Promise.resolve(sendTelegramEvidence(config, { plainText }))
+    .catch(() => {})
+    .finally(() => {
+      console.error(`[${new Date().toISOString()}] [process] Fatal after startup -> exit 2 for systemd recovery`);
+      setTimeout(() => process.exit(2), 300);
+    });
+}
+
+function installProcessGuards() {
+  const logErr = (tag, err) => {
+    const msg =
+      err instanceof Error ? err.stack || err.message : String(err ?? err);
+    console.error(`[${new Date().toISOString()}] [${tag}] ${msg}`);
+  };
+  process.on("uncaughtException", (err) => {
+    logErr("process", err);
+    if (!startupComplete) {
+      console.error(`[${new Date().toISOString()}] [process] Fatal during startup -> exit 1`);
+      process.exit(1);
+    }
+    scheduleFatalRecovery("uncaughtException", err);
+  });
+  process.on("unhandledRejection", (reason) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    logErr("unhandledRejection", err);
+    if (!startupComplete) return;
+    scheduleFatalRecovery("unhandledRejection", err);
+  });
+}
+
+installProcessGuards();
 
 log("Khởi động Zalo Guardian v2.0...");
 
@@ -49,4 +98,5 @@ if (String(process.env.ZALO_GUARDIAN_SKIP_ZALO || "") === "1") {
   }
 }
 
+startupComplete = true;
 log("Toàn hệ thống đã sẵn sàng.");
