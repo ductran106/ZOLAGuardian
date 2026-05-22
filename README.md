@@ -24,3 +24,9 @@ Bot Zalo + Shield Guardian (spam, lặp tin, sticker/emoji, thu hồi/xóa tin) 
 - `run-clean-webui.sh`: tương tự full stack trên Linux (`exec node index.js`).
 
 **Khởi động an toàn:** `index.js` bọc `startZalo` trong `try/catch` — nếu đăng nhập Zalo lỗi, Guardian + Web UI vẫn chạy (đăng nhập lại bằng QR trên Web UI).
+
+## Deploy / rollback
+
+Current deployment runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+Phase 2 scope is i32100 staging + GitHub only. ProBook production is intentionally gated out until staging has run stably for a few days.
