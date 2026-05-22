@@ -1,6 +1,7 @@
 /**
  * Gom cụm tin quote (mở rộng cha ngoài khung giờ) + xuất DOCX tương thích vibecode-docx-processor (parser CHAT_LINE_RE).
  * Chỉ xuất cụm có ≥2 tin liên kết qua trích dẫn; tin đơn lẻ (không quote / không được quote trong tập) bị loại.
+ * Nối cụm: quote_msg_id có thể là globalMsgId — resolve về msg_id thực trong DB (JOIN msg_id hoặc cột global_msg_id).
  * Khối @All: mặc định mọi tin trong khung có @All (không chỉ admin trong DB). ?at_all_scope=admin để chỉ lấy user_id ∈ admin_ids.
  * Cha của quote: CAST(msg_id) = CAST(quote_msg_id) để khớp globalMsgId/msgId giữa các kiểu.
  * Mỗi cụm = thành phần liên thông theo chuỗi quote; trong cụm sắp theo giờ. Màu nền: một màu cho cả cụm,
@@ -193,6 +194,46 @@ function normalizeUid(v) {
   return String(v || "").trim().replace(/_0$/i, "");
 }
 
+/**
+ * Mọi tham chiếu có thể trỏ tới tin cha (cột quote + parse JSON content — dữ liệu cũ thiếu cột).
+ */
+function collectQuoteRefsFromRow(row) {
+  const out = [];
+  const push = (v) => {
+    const s = String(v ?? "").trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  push(row.quote_msg_id);
+  if (typeof row.content === "string" && row.content.trim().startsWith("{")) {
+    try {
+      const o = JSON.parse(row.content);
+      const q = o.quote || o.attach?.quote;
+      if (q && typeof q === "object") {
+        push(q.globalMsgId);
+        push(q.msgId);
+        push(q.cliMsgId);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
+}
+
+/**
+ * Tìm msg_id cha đã có trong `expanded`, thử nhiều ref (msg_id / global_msg_id / JSON trong content).
+ * `parentByRef` là cache per-build để tránh query lặp theo cùng ref.
+ */
+function resolveQuoteToExpandedMsgId(expanded, row, parentByRef) {
+  for (const ref of collectQuoteRefsFromRow(row)) {
+    const parent = parentByRef.get(ref);
+    if (!parent) continue;
+    const pid = String(parent.msg_id);
+    if (expanded.has(pid)) return pid;
+  }
+  return "";
+}
+
 function formatChatLine(row, missing) {
   const tsStr = formatTsVN(row.ts);
   const name = sanitizeSender(row.display_name || row.user_id);
@@ -253,48 +294,81 @@ export async function buildQuoteDocxBuffer(db, q) {
   const inWindow = db
     .prepare(
       `SELECT msg_id, group_id, user_id, display_name, content, ts,
-              quote_msg_id, quote_owner_id
+              quote_msg_id, quote_owner_id, global_msg_id
        FROM messages
        WHERE group_id = ? AND ts >= ? AND ts <= ?
        ORDER BY ts ASC`
     )
     .all(groupId, startMs, endMs);
 
-  const stmtParentByQuoteRef = db.prepare(
-    `SELECT msg_id, group_id, user_id, display_name, content, ts, quote_msg_id, quote_owner_id
+  const stmtParentByMsgId = db.prepare(
+    `SELECT msg_id, group_id, user_id, display_name, content, ts,
+            quote_msg_id, quote_owner_id, global_msg_id
      FROM messages
-     WHERE group_id = ? AND CAST(msg_id AS TEXT) = CAST(? AS TEXT)`
+     WHERE group_id = ? AND msg_id = ?`
+  );
+
+  const stmtParentByGlobalMsgId = db.prepare(
+    `SELECT msg_id, group_id, user_id, display_name, content, ts,
+            quote_msg_id, quote_owner_id, global_msg_id
+     FROM messages
+     WHERE group_id = ? AND global_msg_id = ?`
   );
 
   /** @type {Map<string, object & { missing?: boolean }>} */
   const expanded = new Map();
+  /** @type {Map<string, (object & { missing?: boolean }) | null>} */
+  const parentByRef = new Map();
   for (const row of inWindow) {
     const id = String(row.msg_id);
     expanded.set(id, { ...row, missing: false });
+    parentByRef.set(id, { ...row, missing: false });
+    const globalRef = String(row.global_msg_id || "").trim();
+    if (globalRef) parentByRef.set(globalRef, { ...row, missing: false });
   }
+
+  const getParentByRef = (ref) => {
+    const key = String(ref || "").trim();
+    if (!key) return null;
+    if (parentByRef.has(key)) return parentByRef.get(key);
+    let parent = stmtParentByMsgId.get(groupId, key) || null;
+    if (!parent) {
+      parent = stmtParentByGlobalMsgId.get(groupId, key) || null;
+    }
+    parentByRef.set(key, parent);
+    if (parent) {
+      const globalRef = String(parent.global_msg_id || "").trim();
+      if (globalRef && !parentByRef.has(globalRef)) parentByRef.set(globalRef, parent);
+      parentByRef.set(String(parent.msg_id), parent);
+    }
+    return parent;
+  };
 
   const queue = [...inWindow];
   while (queue.length) {
     const m = queue.shift();
-    const qid = m.quote_msg_id ? String(m.quote_msg_id).trim() : "";
-    if (!qid) continue;
-    if (expanded.has(qid)) continue;
-    const parent = stmtParentByQuoteRef.get(groupId, qid);
-    if (!parent) continue;
-    const pid = String(parent.msg_id);
-    if (expanded.has(pid)) continue;
-    const missing = Number(parent.ts) < startMs || Number(parent.ts) > endMs;
-    expanded.set(pid, { ...parent, missing });
-    queue.push(parent);
+    for (const qid of collectQuoteRefsFromRow(m)) {
+      const parent = getParentByRef(qid);
+      if (!parent) continue;
+      const pid = String(parent.msg_id);
+      if (expanded.has(pid)) continue;
+      const missing = Number(parent.ts) < startMs || Number(parent.ts) > endMs;
+      const normalizedParent = { ...parent, missing };
+      expanded.set(pid, normalizedParent);
+      parentByRef.set(pid, normalizedParent);
+      const globalRef = String(parent.global_msg_id || "").trim();
+      if (globalRef) parentByRef.set(globalRef, normalizedParent);
+      queue.push(normalizedParent);
+    }
   }
 
   const ids = [...expanded.keys()];
   const uf = new UnionFind(ids);
   for (const row of expanded.values()) {
     const mid = String(row.msg_id);
-    const parentId = row.quote_msg_id ? String(row.quote_msg_id).trim() : "";
-    if (parentId && expanded.has(parentId)) {
-      uf.union(mid, parentId);
+    const parentKey = resolveQuoteToExpandedMsgId(expanded, row, parentByRef);
+    if (parentKey && parentKey !== mid) {
+      uf.union(mid, parentKey);
     }
   }
 

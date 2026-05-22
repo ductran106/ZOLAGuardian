@@ -86,6 +86,25 @@ try {
 try {
   db.prepare("ALTER TABLE messages ADD COLUMN quote_owner_id TEXT").run();
 } catch {}
+try {
+  db.prepare("ALTER TABLE messages ADD COLUMN global_msg_id TEXT").run();
+} catch {}
+
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_messages_group_ts ON messages(group_id, ts)"
+  ).run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_messages_group_global_msg_id ON messages(group_id, global_msg_id)"
+  ).run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_messages_group_quote_msg_id ON messages(group_id, quote_msg_id)"
+  ).run();
+} catch {}
 
 try {
   db.prepare(`CREATE TABLE IF NOT EXISTS jobs (
