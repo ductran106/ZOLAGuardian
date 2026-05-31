@@ -12,13 +12,16 @@ let fatalRecoveryScheduled = false;
 const log = (msg) =>
   console.log(`[${new Date().toISOString()}] [index] ${msg}`);
 
-function scheduleFatalRecovery(reason, err) {
+function scheduleFatalRecovery(reason, err, options = {}) {
   if (fatalRecoveryScheduled) return;
   fatalRecoveryScheduled = true;
 
+  const exitCode = Number.isFinite(Number(options.exitCode)) ? Number(options.exitCode) : 2;
+  const exitDelayMs = Number.isFinite(Number(options.exitDelayMs)) ? Number(options.exitDelayMs) : 5000;
+  const phase = options.phase || (startupComplete ? "sau khi boot" : "trong lúc boot");
   const errText = err instanceof Error ? err.stack || err.message : String(err ?? err);
   const plainText = [
-    "🛑 [GUARDIAN][FATAL] Process gặp lỗi không bắt được sau khi boot",
+    `🛑 [GUARDIAN][FATAL] Process gặp lỗi ${phase}`,
     `Thời gian: ${timeLabelGMT7(Date.now())}`,
     `Host/PID: ${process.pid}`,
     `Lý do: ${reason}`,
@@ -26,12 +29,32 @@ function scheduleFatalRecovery(reason, err) {
     "Hành động: thoát process để systemd tự khởi động lại.",
   ].join("\n");
 
+  let exiting = false;
+  const exitForRecovery = (why) => {
+    if (exiting) return;
+    exiting = true;
+    console.error(`[${new Date().toISOString()}] [process] Fatal ${phase} -> exit ${exitCode} for systemd recovery (${why})`);
+    process.exit(exitCode);
+  };
+
+  const hardExitTimer = setTimeout(() => exitForRecovery("hard-timeout"), exitDelayMs);
   Promise.resolve(sendTelegramEvidence(config, { plainText }))
     .catch(() => {})
     .finally(() => {
-      console.error(`[${new Date().toISOString()}] [process] Fatal after startup -> exit 2 for systemd recovery`);
-      setTimeout(() => process.exit(2), 300);
+      clearTimeout(hardExitTimer);
+      setTimeout(() => exitForRecovery("alert-finished"), 300);
     });
+}
+
+function scheduleStartupZaloRecovery(err) {
+  const msg = err instanceof Error ? err.message : String(err ?? err);
+  log(
+    `Không kết nối được Zalo lúc khởi động: ${msg}. Fail-closed: thoát process để systemd retry, tránh Web UI sống nhưng listener chết âm thầm.`
+  );
+  scheduleFatalRecovery("zalo startup/login failed", err, {
+    phase: "khi startup/login Zalo",
+    exitCode: 2,
+  });
 }
 
 function installProcessGuards() {
@@ -53,6 +76,14 @@ function installProcessGuards() {
     logErr("unhandledRejection", err);
     if (!startupComplete) return;
     scheduleFatalRecovery("unhandledRejection", err);
+  });
+  process.on("SIGTERM", () => {
+    console.error(`[${new Date().toISOString()}] [process] SIGTERM received -> exit 0`);
+    process.exit(0);
+  });
+  process.on("SIGINT", () => {
+    console.error(`[${new Date().toISOString()}] [process] SIGINT received -> exit 0`);
+    process.exit(0);
   });
 }
 
@@ -81,19 +112,20 @@ if (String(process.env.ZALO_GUARDIAN_SKIP_ZALO || "") === "1") {
   const cred = config.credentialsPath
     ? String(config.credentialsPath).trim()
     : "";
-  if (!cred || !existsSync(cred)) {
+  if (!cred) {
     log(
-      "Chưa có file credentials — bỏ qua kết nối Zalo lúc khởi động. Dùng Web UI (Đăng nhập Zalo / QR) để tạo file, rồi restart tiến trình."
+      "Chưa cấu hình credentialsPath — bỏ qua kết nối Zalo lúc khởi động. Dùng Web UI (Đăng nhập Zalo / QR) để tạo file, rồi restart tiến trình."
     );
+  } else if (!existsSync(cred)) {
+    scheduleStartupZaloRecovery(new Error(`credentials file missing: ${cred}`));
+    await new Promise(() => {});
   } else {
     const { startZalo } = await import("./core/zalo.js");
     try {
       await startZalo(config);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(
-        `Không kết nối được Zalo lúc khởi động: ${msg}. Web UI / Guardian vẫn chạy — dùng Đăng nhập QR hoặc sửa file credentials.`
-      );
+      scheduleStartupZaloRecovery(e);
+      await new Promise(() => {});
     }
   }
 }
