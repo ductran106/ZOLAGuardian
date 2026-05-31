@@ -106,8 +106,16 @@ const { startWebUI } = await import("./webui/server.js");
 startWebUI(config);
 log("WebUI started.");
 
-if (String(process.env.ZALO_GUARDIAN_SKIP_ZALO || "") === "1") {
+const skipZalo = String(process.env.ZALO_GUARDIAN_SKIP_ZALO || "") === "1";
+const skipStartupZalo =
+  String(process.env.ZALO_GUARDIAN_SKIP_STARTUP_ZALO || "") === "1";
+
+if (skipZalo) {
   log("Bỏ qua Zalo (ZALO_GUARDIAN_SKIP_ZALO=1) — Web UI / scheduler / Guardian vẫn chạy, không kết nối account.");
+} else if (skipStartupZalo) {
+  log(
+    "Bỏ qua auto-connect Zalo lúc khởi động (ZALO_GUARDIAN_SKIP_STARTUP_ZALO=1) — Web UI / QR login vẫn hoạt động."
+  );
 } else {
   const cred = config.credentialsPath
     ? String(config.credentialsPath).trim()

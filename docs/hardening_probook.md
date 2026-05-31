@@ -467,3 +467,18 @@ Follow this exact order unless new evidence makes it unsafe:
 9. Only then decide whether QR/login recovery is needed.
 
 Do not skip from diagnosis directly to repeated restarts.
+
+### First-time QR login bootstrap mode
+
+When a host has no `credentialsPath` file yet, startup hardening keeps the process alive in
+recovery mode instead of attempting an unsafe unauthenticated Zalo connection. For a first-time
+WebUI QR login on a disposable/staging host, start with:
+
+```bash
+ZALO_GUARDIAN_SKIP_STARTUP_ZALO=1 node index.js
+```
+
+This skips only the startup auto-connect path. It does **not** set `ZALO_GUARDIAN_SKIP_ZALO=1`,
+so `/api/zalo-auth/qr-start` remains available and can write credentials via the WebUI QR flow.
+After credentials are created, restart without `ZALO_GUARDIAN_SKIP_STARTUP_ZALO` to run the
+normal listener/watchdog path.
