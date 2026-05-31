@@ -3,13 +3,13 @@
 // Đây là cầu nối duy nhất giữa zca-js và phần còn lại của hệ thống
 
 import { readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
 import os from "node:os";
 import eventBus from "./eventBus.js";
 import db from "./db.js";
 import { upsertInboundGroupMessage } from "./inboundMessageCache.js";
 import { sendTelegramEvidence, timeLabelGMT7 } from "../modules/guardian/telegramNotify.js";
 import { shouldSkipWatchdogForQuietHours } from "./watchdogQuiet.js";
+import { ACTIONS, STATES, evaluatePostRestart, evaluateTick, initialState } from "./watchdogStateMachine.js";
 
 let api = null;
 let watchdogTimer = null;
@@ -20,6 +20,26 @@ let watchdogRestarting = false;
 let watchdogLastAlertAt = 0;
 let watchdogConsecutiveFailures = 0;
 let listenerLikelyDown = false;
+let watchdogFsmState = initialState();
+let watchdogFsmReason = "watchdog not started";
+let watchdogFsmAction = ACTIONS.NONE;
+let listenerRecoveryVerifyUntil = 0;
+let listenerLastStartAt = 0;
+let listenerInstanceSeq = 0;
+let currentListenerInstanceId = 0;
+let listenerStartSource = "";
+let listenerLastDownAt = 0;
+let listenerLastDownDetail = "";
+let processRestartScheduled = false;
+let quickRestartRequestedAt = 0;
+let quickRestartReason = "";
+let lastPersistOkAt = 0;
+let lastPersistOkGroupId = "";
+let lastPersistOkMsgId = "";
+let lastPersistFailAt = 0;
+let lastPersistFailGroupId = "";
+let lastPersistFailMsgId = "";
+let lastPersistFailDetail = "";
 
 const getEnabledWatchGroupStmt = db.prepare(
   "SELECT 1 FROM watch_groups WHERE group_id = ? AND enabled = 1 LIMIT 1"
@@ -31,6 +51,7 @@ const countEnabledWatchGroupsStmt = db.prepare(
 const WATCHDOG_SILENCE_MS = 5 * 60 * 1000;
 const WATCHDOG_TICK_MS = 30 * 1000;
 const WATCHDOG_MAX_CONSECUTIVE_FAILURES = 3;
+const WATCHDOG_QUICK_RESTART_DELAY_MS = 15 * 1000;
 
 function clearWatchdog() {
   if (watchdogTimer) clearInterval(watchdogTimer);
@@ -42,6 +63,26 @@ function clearWatchdog() {
   watchdogLastAlertAt = 0;
   watchdogConsecutiveFailures = 0;
   listenerLikelyDown = false;
+  watchdogFsmState = initialState();
+  watchdogFsmReason = "watchdog cleared";
+  watchdogFsmAction = ACTIONS.NONE;
+  listenerRecoveryVerifyUntil = 0;
+  listenerLastStartAt = 0;
+  listenerInstanceSeq = 0;
+  currentListenerInstanceId = 0;
+  listenerStartSource = "";
+  listenerLastDownAt = 0;
+  listenerLastDownDetail = "";
+  processRestartScheduled = false;
+  quickRestartRequestedAt = 0;
+  quickRestartReason = "";
+  lastPersistOkAt = 0;
+  lastPersistOkGroupId = "";
+  lastPersistOkMsgId = "";
+  lastPersistFailAt = 0;
+  lastPersistFailGroupId = "";
+  lastPersistFailMsgId = "";
+  lastPersistFailDetail = "";
 }
 
 function isEnabledWatchGroup(groupId) {
@@ -58,26 +99,31 @@ function processFingerprint() {
   return `host=${os.hostname()} pid=${process.pid} ppid=${process.ppid}`;
 }
 
+function markListenerStart(source, log) {
+  listenerInstanceSeq += 1;
+  currentListenerInstanceId = listenerInstanceSeq;
+  listenerStartSource = String(source || "manual");
+  listenerLastStartAt = Date.now();
+  listenerRecoveryVerifyUntil = listenerLastStartAt + WATCHDOG_TICK_MS * 2;
+  quickRestartRequestedAt = 0;
+  quickRestartReason = "";
+  log(
+    `Listener started. instance=${currentListenerInstanceId} source=${listenerStartSource} ${processFingerprint()}`
+  );
+}
+
 async function sendWatchdogAlert(config, plainText) {
   await sendTelegramEvidence(config, { plainText });
 }
 
 function restartCurrentProcess(log) {
-  try {
-    const child = spawn(process.execPath, ["index.js"], {
-      cwd: process.cwd(),
-      env: process.env,
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-    log(`Watchdog tầng 2: đã spawn process mới pid=${child.pid}`);
-  } catch (e) {
-    const em = e instanceof Error ? e.message : String(e);
-    log(`Watchdog tầng 2: spawn process mới FAIL: ${em}`);
-  } finally {
-    setTimeout(() => process.exit(2), 300);
+  if (processRestartScheduled) {
+    log("Watchdog tầng 2: bỏ qua restart trùng vì process restart đã được lên lịch.");
+    return;
   }
+  processRestartScheduled = true;
+  log(`Watchdog tầng 2: yêu cầu systemd restart bằng cách exit process hiện tại. ${processFingerprint()}`);
+  setTimeout(() => process.exit(2), 300).unref();
 }
 
 /**
@@ -88,22 +134,51 @@ function restartCurrentProcess(log) {
 function attachListenerResilience(listener, log) {
   if (!listener?.on) return;
 
-  listener.on("error", (err) => {
+  const markListenerDown = (detail) => {
     listenerLikelyDown = true;
+    listenerLastDownAt = Date.now();
+    listenerLastDownDetail = String(detail || "");
+    const uptimeMs = listenerLastStartAt > 0 ? Math.max(0, listenerLastDownAt - listenerLastStartAt) : null;
+    if (listenerRecoveryVerifyUntil && Date.now() <= listenerRecoveryVerifyUntil) {
+      watchdogConsecutiveFailures += 1;
+      watchdogLastAlertAt = 0;
+      if (watchdogConsecutiveFailures < WATCHDOG_MAX_CONSECUTIVE_FAILURES) {
+        quickRestartRequestedAt = Date.now() + WATCHDOG_QUICK_RESTART_DELAY_MS;
+        quickRestartReason = `verify-window failure: ${detail}`;
+      }
+      log(
+        `Listener hồi phục không bền ngay sau restart (${watchdogConsecutiveFailures}/${WATCHDOG_MAX_CONSECUTIVE_FAILURES}) instance=${currentListenerInstanceId} source=${listenerStartSource} uptimeMs=${uptimeMs ?? -1} -> ${detail}`
+      );
+      if (watchdogConsecutiveFailures >= WATCHDOG_MAX_CONSECUTIVE_FAILURES) {
+        log("Watchdog: listener rơi lại nhiều lần ngay sau restart, escalates process-level restart.");
+        restartCurrentProcess(log);
+        return;
+      }
+    } else {
+      quickRestartRequestedAt = Date.now() + WATCHDOG_QUICK_RESTART_DELAY_MS;
+      quickRestartReason = `runtime down event outside verify window: ${detail}`;
+      log(
+        `Listener down ngoài verify-window: instance=${currentListenerInstanceId} source=${listenerStartSource} uptimeMs=${uptimeMs ?? -1} -> sẽ quick-restart sau ${Math.floor(WATCHDOG_QUICK_RESTART_DELAY_MS / 1000)}s`
+      );
+    }
+  };
+
+  listener.on("error", (err) => {
     const em =
       err instanceof Error
         ? `${err.message}${err.code ? ` [${err.code}]` : ""}`
         : String(err);
+    markListenerDown(`error=${em}`);
     log(`Listener error (process vẫn chạy): ${em}`);
   });
 
   listener.on("closed", (code, reason) => {
-    listenerLikelyDown = true;
+    markListenerDown(`closed code=${code} reason=${reason || ""}`);
     log(`Listener closed: code=${code} reason=${reason || ""}`);
   });
 
   listener.on("disconnected", (code, reason) => {
-    listenerLikelyDown = true;
+    markListenerDown(`disconnected code=${code} reason=${reason || ""}`);
     log(`Listener disconnected: code=${code} reason=${reason || ""}`);
   });
 }
@@ -114,29 +189,57 @@ function startWatchdog(config, log) {
   lastAnyMessageAt = now0;
   lastWatchedMessageAt = now0;
   watchdogTimer = setInterval(async () => {
-    if (!api || !api.listener) return;
-    if (watchdogRestarting) return;
-    if (countEnabledWatchGroups() <= 0) return;
-
     const now = Date.now();
-    if (shouldSkipWatchdogForQuietHours(now) && !listenerLikelyDown) {
-      return;
+    let forcedQuickRestart = false;
+    if (
+      quickRestartRequestedAt > 0 &&
+      now >= quickRestartRequestedAt &&
+      !watchdogRestarting &&
+      api &&
+      api.listener
+    ) {
+      forcedQuickRestart = true;
+      watchdogFsmState = STATES.MONITORING;
+      watchdogFsmReason = `quick restart requested: ${quickRestartReason || "listener-down event"}`;
+      watchdogFsmAction = ACTIONS.RESTART_LISTENER;
     }
+    const fsm = forcedQuickRestart
+      ? {
+          state: watchdogFsmState,
+          reason: watchdogFsmReason,
+          action: ACTIONS.RESTART_LISTENER,
+          silentMs: Math.max(0, now - lastWatchedMessageAt),
+        }
+      : evaluateTick({
+      nowMs: now,
+      watchdogActive: !!watchdogTimer,
+      hasListener: !!(api && api.listener),
+      restarting: watchdogRestarting,
+      watchGroupsEnabledCount: api && api.listener ? countEnabledWatchGroups() : 0,
+      quietHoursActive: shouldSkipWatchdogForQuietHours(now),
+      listenerLikelyDown,
+      lastWatchedMessageAt,
+      lastAlertAt: watchdogLastAlertAt,
+      silenceThresholdMs: WATCHDOG_SILENCE_MS,
+      alertCooldownMs: WATCHDOG_SILENCE_MS,
+    });
+    watchdogFsmState = fsm.state;
+    watchdogFsmReason = fsm.reason;
+    watchdogFsmAction = fsm.action;
+    if (fsm.action !== ACTIONS.RESTART_LISTENER) return;
 
-    const silentMs = now - lastWatchedMessageAt;
-    if (silentMs < WATCHDOG_SILENCE_MS) return;
-    if (watchdogLastAlertAt && now - watchdogLastAlertAt < WATCHDOG_SILENCE_MS) return;
-
+    const silentMs = fsm.silentMs;
     watchdogLastAlertAt = now;
     watchdogRestarting = true;
     const silentMin = Math.floor(silentMs / 60000);
     const anySilentSec = Math.floor((now - lastAnyMessageAt) / 1000);
     const watchedGroupLabel = lastWatchedGroupId || "[chưa có nhóm watch nào ghi nhận]";
     const fingerprint = processFingerprint();
+    const restartMode = forcedQuickRestart ? "quick-restart" : "watchdog-silence";
 
     try {
       log(
-        `Watchdog: nhóm watch im lặng ${silentMin} phút, thử restart listener... lastWatchedGroup=${watchedGroupLabel} ${fingerprint}`
+        `Watchdog: thử restart listener mode=${restartMode} lastWatchedGroup=${watchedGroupLabel} silentWatchMin=${silentMin} quickReason=${quickRestartReason || ""} instance=${currentListenerInstanceId} ${fingerprint}`
       );
       await sendWatchdogAlert(
         config,
@@ -155,10 +258,12 @@ function startWatchdog(config, log) {
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
       api.listener.start();
-      lastWatchedMessageAt = Date.now();
       listenerLikelyDown = false;
-      watchdogConsecutiveFailures = 0;
-      log(`Watchdog: restart listener thành công. ${fingerprint}`);
+      markListenerStart(`watchdog:${restartMode}`, log);
+      watchdogFsmState = STATES.MONITORING;
+      watchdogFsmReason = "listener restart requested; awaiting real traffic";
+      watchdogFsmAction = ACTIONS.NONE;
+      log(`Watchdog: restart listener thành công, chờ verify traffic thật. mode=${restartMode} ${fingerprint}`);
       await sendWatchdogAlert(
         config,
         [
@@ -182,7 +287,14 @@ function startWatchdog(config, log) {
           "Cần kiểm tra thủ công tiến trình / credentials / kết nối mạng.",
         ].join("\n")
       );
-      if (watchdogConsecutiveFailures >= WATCHDOG_MAX_CONSECUTIVE_FAILURES) {
+      const postRestart = evaluatePostRestart({
+        consecutiveFailures: watchdogConsecutiveFailures,
+        maxConsecutiveFailures: WATCHDOG_MAX_CONSECUTIVE_FAILURES,
+      });
+      watchdogFsmState = postRestart.state;
+      watchdogFsmReason = postRestart.reason;
+      watchdogFsmAction = postRestart.action;
+      if (postRestart.action === ACTIONS.ESCALATE_PROCESS) {
         const criticalText = [
           "🛑 [GUARDIAN][CRITICAL] Watchdog thất bại nhiều lần",
           `Thời gian: ${timeLabelGMT7(Date.now())}`,
@@ -231,13 +343,22 @@ export async function startZalo(config) {
     const now = Date.now();
     lastAnyMessageAt = now;
     listenerLikelyDown = false;
-    const msgGroupId = msg.data?.idTo || msg.idTo || "";
+    listenerRecoveryVerifyUntil = 0;
+    watchdogConsecutiveFailures = 0;
+    quickRestartRequestedAt = 0;
+    quickRestartReason = "";
+    const d = msg?.data || msg || {};
+    const msgGroupId = d.idTo || msg.idTo || "";
+    const msgId = String(d.msgId || msg?.msgId || "");
+    const eventTsMs = Number(d.ts || now) || now;
     const isWatchedGroup = isEnabledWatchGroup(msgGroupId);
     if (isWatchedGroup) {
       lastWatchedMessageAt = now;
       lastWatchedGroupId = String(msgGroupId || "");
     }
-    log(`MSG from group: ${msgGroupId}${isWatchedGroup ? " [watch]" : ""}`);
+    log(
+      `MSG from group: ${msgGroupId}${isWatchedGroup ? " [watch]" : ""} msgId=${msgId || "[none]"} instance=${currentListenerInstanceId} source=${listenerStartSource}`
+    );
 
     const gName = msg.data?.groupName || msg.groupName || "";
     if (msgGroupId && gName) {
@@ -255,8 +376,23 @@ export async function startZalo(config) {
     // Cache tin nhóm (quote + global id) — một nguồn, xem core/inboundMessageCache.js
     try {
       upsertInboundGroupMessage(db, msg);
-    } catch {
-      /* ignore */
+      lastPersistOkAt = Date.now();
+      lastPersistOkGroupId = String(msgGroupId || "");
+      lastPersistOkMsgId = msgId;
+      if (isWatchedGroup) {
+        log(
+          `Persist OK [watch] group=${msgGroupId} msgId=${msgId || "[none]"} eventLagMs=${Math.max(0, Date.now() - eventTsMs)} instance=${currentListenerInstanceId}`
+        );
+      }
+    } catch (e) {
+      const em = e instanceof Error ? e.stack || e.message : String(e);
+      lastPersistFailAt = Date.now();
+      lastPersistFailGroupId = String(msgGroupId || "");
+      lastPersistFailMsgId = msgId;
+      lastPersistFailDetail = em;
+      log(
+        `Persist FAIL group=${msgGroupId} msgId=${msgId || "[none]"} watched=${isWatchedGroup ? 1 : 0} instance=${currentListenerInstanceId} error=${em}`
+      );
     }
 
     // Không lọc theo config.watchGroups cứng.
@@ -269,9 +405,9 @@ export async function startZalo(config) {
   });
 
   attachListenerResilience(api.listener, log);
-  api.listener.start();
-  log("Listener started.");
   startWatchdog(config, log);
+  api.listener.start();
+  markListenerStart("initial-login", log);
 
   // Cache tên groups (chỉ cache watched groups + batch để tránh lỗi API)
   try {
@@ -318,12 +454,81 @@ export function getWatchdogState() {
     silenceThresholdMs: WATCHDOG_SILENCE_MS,
     tickMs: WATCHDOG_TICK_MS,
     maxConsecutiveFailures: WATCHDOG_MAX_CONSECUTIVE_FAILURES,
+    fsmState: watchdogFsmState,
+    fsmReason: watchdogFsmReason,
+    fsmAction: watchdogFsmAction,
+    listenerRecoveryVerifyUntil: listenerRecoveryVerifyUntil || 0,
+    listenerLastStartAt: listenerLastStartAt || 0,
+    currentListenerInstanceId: currentListenerInstanceId || 0,
+    listenerStartSource: listenerStartSource || "",
+    listenerLastDownAt: listenerLastDownAt || 0,
+    listenerLastDownDetail: listenerLastDownDetail || "",
+    quickRestartRequestedAt: quickRestartRequestedAt || 0,
+    quickRestartReason: quickRestartReason || "",
+    lastPersistOkAt: lastPersistOkAt || 0,
+    lastPersistOkGroupId: lastPersistOkGroupId || "",
+    lastPersistOkMsgId: lastPersistOkMsgId || "",
+    lastPersistFailAt: lastPersistFailAt || 0,
+    lastPersistFailGroupId: lastPersistFailGroupId || "",
+    lastPersistFailMsgId: lastPersistFailMsgId || "",
+    lastPersistFailDetail: lastPersistFailDetail || "",
   };
 }
 
 /**
  * Dừng listener WebSocket và xóa tham chiếu API (đăng xuất phía client).
  */
+export function getHealthSnapshot() {
+  const now = Date.now();
+  const watchGroupsEnabledCount = api && api.listener ? countEnabledWatchGroups() : 0;
+  const silentAnyMs = lastAnyMessageAt > 0 ? Math.max(0, now - lastAnyMessageAt) : null;
+  const silentWatchedMs = lastWatchedMessageAt > 0 ? Math.max(0, now - lastWatchedMessageAt) : null;
+  const listenerConnected = !!(api && api.listener);
+  const startupGraceActive = !!(
+    listenerLastStartAt && now - listenerLastStartAt < WATCHDOG_SILENCE_MS
+  );
+
+  let status = "healthy";
+  let reason = "listener connected and traffic within threshold";
+
+  if (!listenerConnected) {
+    status = "down";
+    reason = "api/listener missing";
+  } else if (listenerLikelyDown) {
+    status = "down";
+    reason = "listener flagged down by runtime events";
+  } else if (watchGroupsEnabledCount > 0 && !startupGraceActive && silentWatchedMs !== null && silentWatchedMs >= WATCHDOG_SILENCE_MS) {
+    status = "down";
+    reason = "watched-group traffic stale beyond threshold";
+  } else if (watchdogConsecutiveFailures > 0) {
+    status = "degraded";
+    reason = `watchdog recovery failures present (${watchdogConsecutiveFailures})`;
+  } else if (listenerRecoveryVerifyUntil && now <= listenerRecoveryVerifyUntil) {
+    status = "degraded";
+    reason = "listener recently started/restarted; waiting for real traffic verification";
+  } else if (watchGroupsEnabledCount <= 0) {
+    status = "degraded";
+    reason = "no watch groups enabled";
+  }
+
+  return {
+    ok: status === "healthy",
+    status,
+    reason,
+    listenerConnected,
+    listenerLikelyDown,
+    watchGroupsEnabledCount,
+    startupGraceActive,
+    silentAnyMs,
+    silentWatchedMs,
+    watchdog: getWatchdogState(),
+    process: {
+      pid: process.pid,
+      ppid: process.ppid,
+    },
+  };
+}
+
 export function stopZalo() {
   if (!api) return;
   clearWatchdog();
