@@ -294,7 +294,7 @@ export async function buildQuoteDocxBuffer(db, q) {
   const inWindow = db
     .prepare(
       `SELECT msg_id, group_id, user_id, display_name, content, ts,
-              quote_msg_id, quote_owner_id, global_msg_id
+              quote_msg_id, quote_owner_id, global_msg_id, cli_msg_id
        FROM messages
        WHERE group_id = ? AND ts >= ? AND ts <= ?
        ORDER BY ts ASC`
@@ -303,16 +303,23 @@ export async function buildQuoteDocxBuffer(db, q) {
 
   const stmtParentByMsgId = db.prepare(
     `SELECT msg_id, group_id, user_id, display_name, content, ts,
-            quote_msg_id, quote_owner_id, global_msg_id
+            quote_msg_id, quote_owner_id, global_msg_id, cli_msg_id
      FROM messages
      WHERE group_id = ? AND msg_id = ?`
   );
 
   const stmtParentByGlobalMsgId = db.prepare(
     `SELECT msg_id, group_id, user_id, display_name, content, ts,
-            quote_msg_id, quote_owner_id, global_msg_id
+            quote_msg_id, quote_owner_id, global_msg_id, cli_msg_id
      FROM messages
      WHERE group_id = ? AND global_msg_id = ?`
+  );
+
+  const stmtParentByCliMsgId = db.prepare(
+    `SELECT msg_id, group_id, user_id, display_name, content, ts,
+            quote_msg_id, quote_owner_id, global_msg_id, cli_msg_id
+     FROM messages
+     WHERE group_id = ? AND cli_msg_id = ?`
   );
 
   /** @type {Map<string, object & { missing?: boolean }>} */
@@ -325,6 +332,8 @@ export async function buildQuoteDocxBuffer(db, q) {
     parentByRef.set(id, { ...row, missing: false });
     const globalRef = String(row.global_msg_id || "").trim();
     if (globalRef) parentByRef.set(globalRef, { ...row, missing: false });
+    const cliRef = String(row.cli_msg_id || "").trim();
+    if (cliRef) parentByRef.set(cliRef, { ...row, missing: false });
   }
 
   const getParentByRef = (ref) => {
@@ -335,10 +344,15 @@ export async function buildQuoteDocxBuffer(db, q) {
     if (!parent) {
       parent = stmtParentByGlobalMsgId.get(groupId, key) || null;
     }
+    if (!parent) {
+      parent = stmtParentByCliMsgId.get(groupId, key) || null;
+    }
     parentByRef.set(key, parent);
     if (parent) {
       const globalRef = String(parent.global_msg_id || "").trim();
       if (globalRef && !parentByRef.has(globalRef)) parentByRef.set(globalRef, parent);
+      const cliRef = String(parent.cli_msg_id || "").trim();
+      if (cliRef && !parentByRef.has(cliRef)) parentByRef.set(cliRef, parent);
       parentByRef.set(String(parent.msg_id), parent);
     }
     return parent;
@@ -358,6 +372,8 @@ export async function buildQuoteDocxBuffer(db, q) {
       parentByRef.set(pid, normalizedParent);
       const globalRef = String(parent.global_msg_id || "").trim();
       if (globalRef) parentByRef.set(globalRef, normalizedParent);
+      const cliRef = String(parent.cli_msg_id || "").trim();
+      if (cliRef) parentByRef.set(cliRef, normalizedParent);
       queue.push(normalizedParent);
     }
   }

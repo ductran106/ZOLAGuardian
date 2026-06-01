@@ -18,19 +18,15 @@ export function extractQuotePersist(msg) {
   if (!q || typeof q !== "object") {
     return { quoteMsgId: "", quoteOwnerId: "" };
   }
-  const g =
-    q.globalMsgId != null && String(q.globalMsgId).trim() !== ""
-      ? String(q.globalMsgId).trim()
-      : "";
-  const m =
-    q.msgId != null && String(q.msgId).trim() !== ""
-      ? String(q.msgId).trim()
-      : "";
-  const c =
-    q.cliMsgId != null && String(q.cliMsgId).trim() !== ""
-      ? String(q.cliMsgId).trim()
-      : "";
-  // Ưu globalMsgId (scheduler / TAKE) rồi msgId / cliMsgId (một số payload reply chỉ có msgId).
+  const usableRef = (v) => {
+    const s = v == null ? "" : String(v).trim();
+    return s && s !== "0" ? s : "";
+  };
+  const g = usableRef(q.globalMsgId);
+  const m = usableRef(q.msgId);
+  const c = usableRef(q.cliMsgId);
+  // Ưu globalMsgId (scheduler / TAKE) rồi msgId / cliMsgId.
+  // zca-js có thể trả globalMsgId=0 cho self-quote; 0 là sentinel, không phải ref cha.
   const quoteMsgId = g || m || c || "";
   const quoteOwnerId =
     q.ownerId != null && String(q.ownerId).trim() !== ""
@@ -46,7 +42,8 @@ export function extractRootGlobalMsgId(msg) {
   const d = msg?.data || msg || {};
   const v = d.globalMsgId ?? d.global_msg_id;
   if (v == null || v === "") return "";
-  return String(v).trim();
+  const s = String(v).trim();
+  return s === "0" ? "" : s;
 }
 
 /**
@@ -66,12 +63,13 @@ export function upsertInboundGroupMessage(db, msg) {
       : String(cacheContent || "");
   const { quoteMsgId, quoteOwnerId } = extractQuotePersist(msg);
   const globalMsgId = extractRootGlobalMsgId(msg);
+  const cliMsgId = d.cliMsgId == null ? "" : String(d.cliMsgId).trim();
 
   db.prepare(
     `INSERT INTO messages
       (msg_id, group_id, user_id, display_name, content, ts,
-       quote_msg_id, quote_owner_id, global_msg_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       quote_msg_id, quote_owner_id, global_msg_id, cli_msg_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(msg_id) DO UPDATE SET
        group_id = excluded.group_id,
        user_id = excluded.user_id,
@@ -92,6 +90,10 @@ export function upsertInboundGroupMessage(db, msg) {
        global_msg_id = COALESCE(
          NULLIF(TRIM(excluded.global_msg_id), ''),
          NULLIF(TRIM(messages.global_msg_id), '')
+       ),
+       cli_msg_id = COALESCE(
+         NULLIF(TRIM(excluded.cli_msg_id), ''),
+         NULLIF(TRIM(messages.cli_msg_id), '')
        )`
   ).run(
     String(cacheMsgId),
@@ -102,6 +104,7 @@ export function upsertInboundGroupMessage(db, msg) {
     Number(cacheTs) || Date.now(),
     quoteMsgId || null,
     quoteOwnerId || null,
-    globalMsgId || null
+    globalMsgId || null,
+    cliMsgId || null
   );
 }

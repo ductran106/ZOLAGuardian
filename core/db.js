@@ -89,6 +89,9 @@ try {
 try {
   db.prepare("ALTER TABLE messages ADD COLUMN global_msg_id TEXT").run();
 } catch {}
+try {
+  db.prepare("ALTER TABLE messages ADD COLUMN cli_msg_id TEXT").run();
+} catch {}
 
 try {
   db.prepare(
@@ -103,6 +106,11 @@ try {
 try {
   db.prepare(
     "CREATE INDEX IF NOT EXISTS idx_messages_group_quote_msg_id ON messages(group_id, quote_msg_id)"
+  ).run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_messages_group_cli_msg_id ON messages(group_id, cli_msg_id)"
   ).run();
 } catch {}
 
