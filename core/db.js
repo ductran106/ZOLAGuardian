@@ -77,6 +77,29 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (group_id, type)
   );
+
+  CREATE TABLE IF NOT EXISTS group_members (
+    group_id         TEXT NOT NULL,
+    user_id          TEXT NOT NULL,
+    display_name     TEXT,
+    zalo_name        TEXT,
+    avatar           TEXT,
+    account_status   INTEGER,
+    type             INTEGER,
+    global_id        TEXT,
+    last_update_time INTEGER,
+    last_sync_ts     INTEGER NOT NULL,
+    is_active        INTEGER DEFAULT 1,
+    left_ts          INTEGER,
+    PRIMARY KEY (group_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS sheet_member_sync_state (
+    target_key     TEXT PRIMARY KEY,
+    group_id       TEXT,
+    last_row_count INTEGER DEFAULT 0,
+    last_write_ts  INTEGER
+  );
 `);
 
 // Migrate: thêm cột quote nếu chưa có
@@ -111,6 +134,27 @@ try {
 try {
   db.prepare(
     "CREATE INDEX IF NOT EXISTS idx_messages_group_cli_msg_id ON messages(group_id, cli_msg_id)"
+  ).run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE group_members ADD COLUMN is_active INTEGER DEFAULT 1").run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE group_members ADD COLUMN left_ts INTEGER").run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id)"
+  ).run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_group_members_sync ON group_members(last_sync_ts)"
+  ).run();
+} catch {}
+try {
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_group_members_active ON group_members(group_id, is_active)"
   ).run();
 } catch {}
 

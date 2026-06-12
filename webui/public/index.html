@@ -120,6 +120,38 @@
       </div>
     </section>
 
+    <section class="panel" aria-label="Danh sách thành viên nhóm">
+      <div class="section-header">
+        <h2>👥 Danh sách thành viên nhóm → Google Sheets</h2>
+        <p class="hint">
+          Lấy danh sách thành viên từ Zalo, xem preview trước khi push. Google Sheets chỉ nhận <strong>tên hiển thị</strong>, ghi đúng cột cấu hình và không hiển thị credentials.
+        </p>
+      </div>
+      <div class="controls score-job-controls">
+        <label>Nhóm
+          <select id="members-group-select"><option value="">— Chọn nhóm —</option></select>
+        </label>
+        <button type="button" id="members-fetch-btn" class="btn primary">Lấy danh sách thành viên</button>
+        <label>Target Sheets
+          <select id="members-sheet-target">
+            <option value="bonngay">BonNgay — ghi từ BonNgay!F3</option>
+            <option value="sheet1">Sheet1 — ghi từ Sheet1!B2</option>
+            <option value="both">Cả hai target</option>
+          </select>
+        </label>
+        <label class="docx-checkbox"><input type="checkbox" id="members-sheets-dry-run" checked /> Dry-run</label>
+        <button type="button" id="members-push-sheets-btn" class="btn secondary">Push lên Google Sheets</button>
+      </div>
+      <div id="members-sheet-targets-msg" class="msg" hidden></div>
+      <div id="members-preview-msg" class="msg" hidden></div>
+      <div class="table-wrap">
+        <table class="vio-table" aria-label="Preview thành viên nhóm">
+          <thead><tr><th>Tên hiển thị</th><th>Zalo name</th><th>UID</th><th>Last update</th></tr></thead>
+          <tbody id="members-preview-tbody"><tr><td colspan="4" class="empty muted">Chưa lấy danh sách</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel" aria-label="Nhóm">
       <div class="section-head">
         <div class="section-head-left">

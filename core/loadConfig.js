@@ -13,6 +13,10 @@
 //   WATCHDOG_QUIET_END     — mặc định "05:00" (GMT+7)
 //   WEBUI_BASIC_USER       — Basic Auth cho Web UI (tùy chọn)
 //   WEBUI_BASIC_PASSWORD
+//   GOOGLE_SHEETS_ENABLED          — mặc định 0/false
+//   GOOGLE_SHEETS_CREDENTIALS_PATH — service account JSON path (không commit)
+//   GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID — target ID from env only
+//   GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID  — target ID from env only
 //
 // Alias: CREDENTIALS_PATH, ZCA_PATH
 
@@ -49,6 +53,12 @@ function str(v) {
   if (v == null || v === "") return undefined;
   const s = String(v).trim();
   return s === "" ? undefined : s;
+}
+
+function bool(v, fallback = false) {
+  const s = str(v);
+  if (s == null) return fallback;
+  return ["1", "true", "yes", "on"].includes(s.toLowerCase());
 }
 
 /**
@@ -102,6 +112,33 @@ export function loadConfig() {
   const watchdogQuietEnd =
     str(e.WATCHDOG_QUIET_END) ?? str(base.watchdogQuietEnd) ?? "05:00";
 
+  const googleSheets = {
+    ...(base.googleSheets && typeof base.googleSheets === "object" ? base.googleSheets : {}),
+    enabled: bool(e.GOOGLE_SHEETS_ENABLED, !!base.googleSheets?.enabled),
+    credentialsPath:
+      str(e.GOOGLE_SHEETS_CREDENTIALS_PATH) ??
+      str(base.googleSheets?.credentialsPath) ??
+      "",
+  };
+  const memberTargets = {
+    ...(googleSheets.memberTargets && typeof googleSheets.memberTargets === "object"
+      ? googleSheets.memberTargets
+      : {}),
+  };
+  if (str(e.GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID)) {
+    memberTargets.bonngay = {
+      ...(memberTargets.bonngay || {}),
+      spreadsheetId: str(e.GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID),
+    };
+  }
+  if (str(e.GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID)) {
+    memberTargets.sheet1 = {
+      ...(memberTargets.sheet1 || {}),
+      spreadsheetId: str(e.GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID),
+    };
+  }
+  googleSheets.memberTargets = memberTargets;
+
   return {
     ...base,
     credentialsPath: credentialsPath ?? "",
@@ -114,5 +151,6 @@ export function loadConfig() {
     webuiBasicPassword: webuiBasicPassword ?? "",
     watchdogQuietStart,
     watchdogQuietEnd,
+    googleSheets,
   };
 }
