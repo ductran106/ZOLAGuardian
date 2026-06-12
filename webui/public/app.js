@@ -517,6 +517,104 @@ function renderExportDocxGroupOptions() {
   }
 }
 
+function renderMembersGroupOptions() {
+  const sel = document.getElementById("members-group-select");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— Chọn nhóm —</option>';
+  for (const g of sortGroupsGuardianFirst(cachedGroupItems)) {
+    const op = document.createElement("option");
+    op.value = String(g.group_id || "");
+    op.textContent = `${String(g.name || "(Không tên)")} (${String(g.group_id || "")})`;
+    sel.appendChild(op);
+  }
+  if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+}
+
+function renderMembersPreview(members) {
+  const tbody = document.getElementById("members-preview-tbody");
+  if (!tbody) return;
+  if (!Array.isArray(members) || members.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty muted">Không có thành viên trong cache/preview.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = members.slice(0, 500).map((m) => `
+    <tr>
+      <td>${escapeHtml(m.display_name || "")}</td>
+      <td>${escapeHtml(m.zalo_name || "")}</td>
+      <td><code>${escapeHtml(m.user_id || "")}</code></td>
+      <td>${escapeHtml(String(m.last_update_time || ""))}</td>
+    </tr>
+  `).join("");
+}
+
+function setMembersMsg(text, err) {
+  const el = document.getElementById("members-preview-msg");
+  if (!el) return;
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.classList.toggle("err", !!err);
+}
+
+async function loadMemberSheetTargets() {
+  const el = document.getElementById("members-sheet-targets-msg");
+  if (!el) return;
+  try {
+    const j = await fetchJSON("/api/groups/member-sheet-targets");
+    const labels = (j.targets || []).map((t) => `${t.label}: ${t.clearRange}`).join("; ");
+    el.hidden = false;
+    el.textContent = `Sheets ${j.enabled ? "enabled" : "disabled by default"}. Targets: ${labels}`;
+    el.classList.toggle("err", false);
+  } catch (e) {
+    el.hidden = false;
+    el.textContent = e.message;
+    el.classList.toggle("err", true);
+  }
+}
+
+async function fetchSelectedGroupMembers() {
+  const sel = document.getElementById("members-group-select");
+  const btn = document.getElementById("members-fetch-btn");
+  const groupId = String(sel?.value || "").trim();
+  if (!groupId) return toast("Chọn nhóm trước.", true);
+  if (btn) btn.disabled = true;
+  try {
+    setMembersMsg("Đang lấy danh sách thành viên từ Zalo…", false);
+    const j = await fetchJSON(`/api/groups/${encodeURIComponent(groupId)}/members/sync`, { method: "POST" });
+    renderMembersPreview(j.members || []);
+    setMembersMsg(`Đã lấy ${j.count || 0} thành viên. Preview hiển thị trước khi push Sheets.`, false);
+  } catch (e) {
+    setMembersMsg(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function pushSelectedGroupMembersToSheets() {
+  const groupId = String(document.getElementById("members-group-select")?.value || "").trim();
+  const target = document.getElementById("members-sheet-target")?.value || "both";
+  const dryRun = !!document.getElementById("members-sheets-dry-run")?.checked;
+  const groupLabel = document.getElementById("members-group-select")?.selectedOptions?.[0]?.textContent || groupId;
+  if (!groupId) return toast("Chọn nhóm trước.", true);
+  const msg = `Push danh sách thành viên nhóm ${groupLabel} tới ${target}?\nSẽ xóa dữ liệu cũ trong cột target từ dòng bắt đầu rồi ghi lại danh sách mới.${dryRun ? "\nDRY-RUN: không ghi Google Sheets." : ""}`;
+  if (!confirm(msg)) return;
+  const btn = document.getElementById("members-push-sheets-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const j = await fetchJSON(`/api/groups/${encodeURIComponent(groupId)}/members/push-sheets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, dryRun }),
+    });
+    const ranges = (j.results || []).map((r) => `${r.label}: ${r.clearRange} (${r.count})`).join("; ");
+    setMembersMsg(`Push ${dryRun ? "dry-run" : "live"} OK: ${ranges}`, false);
+  } catch (e) {
+    setMembersMsg(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function setUidLookupMsg(text, err) {
   const el = document.getElementById("uid-lookup-msg");
   if (!el) return;
@@ -843,6 +941,7 @@ async function loadGroups() {
     renderLookupGroupOptions();
     renderScoreGroupOptions();
     renderExportDocxGroupOptions();
+    renderMembersGroupOptions();
     void refreshDocxWatchedPanel();
     applyGroupFilter();
   } catch (e) {
@@ -1695,6 +1794,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (sd) sd.value = today;
   if (jd) jd.value = today;
   if (ed) ed.value = today;
+  document.getElementById("members-fetch-btn")?.addEventListener("click", fetchSelectedGroupMembers);
+  document.getElementById("members-push-sheets-btn")?.addEventListener("click", pushSelectedGroupMembersToSheets);
+  void loadMemberSheetTargets();
+
   document
     .getElementById("export-docx-add-tracked")
     ?.addEventListener("click", async () => {

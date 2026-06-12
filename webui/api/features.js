@@ -7,6 +7,9 @@ import db from "../../core/db.js";
 import { getApi } from "../../core/zalo.js";
 import { isBotGroupAdmin } from "../../core/groupDiscovery.js";
 import { parseHHMM } from "../../core/watchdogQuiet.js";
+import { loadConfig } from "../../core/loadConfig.js";
+import { getCachedGroupMembers, syncGroupMembers, dedupeMembersForSheet } from "../../core/groupMembers.js";
+import { getMemberSheetTargets, pushMemberNamesToSheets } from "../../core/googleSheetsMembers.js";
 
 export const featuresRouter = Router();
 export const groupsRouter = Router();
@@ -110,6 +113,73 @@ groupsRouter.get("/lookup-users", (req, res) => {
 });
 
 const GROUP_INFO_CHUNK = 35;
+
+/** GET /api/groups/member-sheet-targets — target Google Sheets public metadata, no secrets */
+groupsRouter.get("/member-sheet-targets", (_req, res) => {
+  const config = loadConfig();
+  const targets = Object.values(getMemberSheetTargets(config)).map((t) => ({
+    key: t.key,
+    label: t.label,
+    sheetName: t.sheetName,
+    startCell: t.startCell,
+    clearRange: t.clearRange,
+    valuesRange: t.valuesRange,
+  }));
+  res.json({
+    ok: true,
+    enabled: !!config.googleSheets?.enabled,
+    configured: !!(config.googleSheets?.enabled && config.googleSheets?.credentialsPath),
+    targets,
+  });
+});
+
+/** GET /api/groups/:groupId/members — cache-only by default; ?refresh=1 syncs from Zalo */
+groupsRouter.get("/:groupId/members", async (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  if (!groupId) return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  try {
+    if (String(req.query.refresh || "") === "1") {
+      const fresh = await syncGroupMembers(groupId);
+      return res.json({ ok: true, ...fresh, lastSyncTs: fresh.syncedAt });
+    }
+    res.json({ ok: true, ...getCachedGroupMembers(groupId) });
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+/** POST /api/groups/:groupId/members/sync — read-only Zalo member sync into cache */
+groupsRouter.post("/:groupId/members/sync", async (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  if (!groupId) return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  try {
+    const fresh = await syncGroupMembers(groupId);
+    eventBus.emit("guardian:db:changed");
+    res.json({ ok: true, ...fresh, lastSyncTs: fresh.syncedAt });
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+/** POST /api/groups/:groupId/members/push-sheets — writes display names only; supports dryRun */
+groupsRouter.post("/:groupId/members/push-sheets", async (req, res) => {
+  const groupId = String(req.params.groupId || "").trim();
+  const { target = "both", dryRun = false } = req.body || {};
+  if (!groupId) return res.status(400).json({ ok: false, error: "Thiếu groupId" });
+  try {
+    const cached = getCachedGroupMembers(groupId);
+    const members = dedupeMembersForSheet(cached.members);
+    if (!members.length) {
+      return res.status(409).json({ ok: false, code: "GROUP_MEMBERS_CACHE_EMPTY", error: "Chưa có cache thành viên; hãy bấm Lấy danh sách thành viên trước." });
+    }
+    const names = members.map((m) => m.display_name);
+    const pushedAt = new Date().toISOString();
+    const out = await pushMemberNamesToSheets({ config: loadConfig(), target, names, dryRun: !!dryRun });
+    res.json({ ok: true, groupId, count: names.length, target, pushedAt, ...out });
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ ok: false, code: e.code, error: String(e?.message || e) });
+  }
+});
 
 /** POST /api/groups/sync — phải khai báo TRƯỚC route :groupId */
 groupsRouter.post("/sync", async (req, res) => {

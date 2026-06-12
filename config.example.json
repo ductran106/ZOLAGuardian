@@ -18,5 +18,23 @@
     "blockSticker": true,
     "allowTextSubstrings": []
   },
-  "webuiPort": 3456
+  "webuiPort": 3456,
+  "googleSheets": {
+    "enabled": false,
+    "credentialsPath": "data/google-service-account.json",
+    "memberTargets": {
+      "bonngay": {
+        "label": "BonNgay",
+        "spreadsheetId": "1kKlmhAb7zCk4Jmw48QOSBYbXXpnTEkSOATN9EKMbDhw",
+        "sheetName": "BonNgay",
+        "startCell": "F3"
+      },
+      "sheet1": {
+        "label": "Sheet1",
+        "spreadsheetId": "1Kct73bLlGUBA_5gYKVaUgw3KJ2Qz7dhvIcdN5jc0CVE",
+        "sheetName": "Sheet1",
+        "startCell": "B2"
+      }
+    }
+  }
 }
