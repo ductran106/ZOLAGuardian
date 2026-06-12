@@ -31,9 +31,11 @@ export function extractMemberIds(groupMeta) {
 }
 
 export function normalizeMember(raw, fallbackUserId = "") {
-  const userId = compactString(
-    raw?.user_id ?? raw?.userId ?? raw?.uid ?? raw?.id ?? fallbackUserId
+  const requestedUserId = compactString(fallbackUserId);
+  const rawUserId = compactString(
+    raw?.user_id ?? raw?.userId ?? raw?.uid ?? raw?.id
   );
+  const userId = requestedUserId || rawUserId;
   const displayName = compactString(
     raw?.display_name ?? raw?.displayName ?? raw?.dName ?? raw?.name ?? raw?.zaloName
   );
@@ -108,16 +110,31 @@ function profileMapFromResponse(res) {
   return map;
 }
 
-function lookupRequestedProfile(map, uid) {
+export function profileLookupKeys(uid) {
+  const id = compactString(uid);
+  if (!id) return [];
+  const keys = [id];
+  const base = id.replace(/_[0-9]+$/, "");
+  if (base && base !== id) keys.push(base);
+  return keys;
+}
+
+function requestedProfileMatches(raw, uid) {
+  const rawId = profileId(raw);
+  if (!rawId) return true;
+  return profileLookupKeys(uid).includes(rawId);
+}
+
+export function lookupRequestedProfile(map, uid) {
+  const lookupKeys = profileLookupKeys(uid);
   if (Array.isArray(map)) {
-    return map.find((x) => profileId(x) === uid) || null;
+    return map.find((x) => requestedProfileMatches(x, uid)) || null;
   }
   if (map && typeof map === "object") {
-    const raw = map[uid];
-    if (!raw) return null;
-    const rawId = profileId(raw);
-    if (rawId && rawId !== uid) return null;
-    return raw;
+    for (const key of lookupKeys) {
+      const raw = map[key];
+      if (raw && requestedProfileMatches(raw, uid)) return raw;
+    }
   }
   return null;
 }
