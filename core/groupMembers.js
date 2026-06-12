@@ -42,7 +42,7 @@ export function normalizeMember(raw, fallbackUserId = "") {
   const zaloName = compactString(raw?.zalo_name ?? raw?.zaloName ?? raw?.name);
   return {
     user_id: userId,
-    display_name: displayName || zaloName || userId,
+    display_name: displayName || zaloName,
     zalo_name: zaloName,
     avatar: compactString(raw?.avatar ?? raw?.avatarUrl ?? raw?.avt),
     account_status: Number.isFinite(Number(raw?.accountStatus ?? raw?.account_status))
