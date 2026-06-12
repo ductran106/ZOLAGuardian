@@ -26,6 +26,7 @@ import {
   LineRuleType,
 } from "docx";
 
+import { hostname } from "node:os";
 const ALL_TAG_RE = /\b@All\b/;
 const BOT_RECALL_MARKER_A = "Tin nhắn thu hồi";
 const BOT_RECALL_MARKER_B = "Nội dung đã thu hồi";
@@ -523,5 +524,5 @@ export async function buildQuoteDocxBuffer(db, q) {
 
 export function safeExportFilename(date, groupId) {
   const g = String(groupId).replace(/[^\w.-]+/g, "_").slice(-24);
-  return `quote_export_${date}_${g}.docx`;
+  return `quote_export_${date}_${g}_${hostname()}.docx`;
 }

@@ -12,6 +12,7 @@ async function fetchJSON(url, opts = {}) {
 
 function toast(text, err) {
   const el = document.getElementById("toast");
+  if (!el) return;
   el.textContent = text;
   el.hidden = false;
   el.classList.toggle("err", !!err);
