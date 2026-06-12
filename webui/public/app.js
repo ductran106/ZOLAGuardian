@@ -556,14 +556,21 @@ function setMembersMsg(text, err) {
   el.classList.toggle("err", !!err);
 }
 
+function formatMemberSheetTarget(t) {
+  const label = t?.label || t?.key || "Target";
+  const sheetName = t?.sheetName || "Sheet";
+  const startCell = t?.startCell || "?";
+  return `${label}: ${sheetName} từ ${startCell}`;
+}
+
 async function loadMemberSheetTargets() {
   const el = document.getElementById("members-sheet-targets-msg");
   if (!el) return;
   try {
     const j = await fetchJSON("/api/groups/member-sheet-targets");
-    const labels = (j.targets || []).map((t) => `${t.label}: ${t.clearRange}`).join("; ");
+    const labels = (j.targets || []).map(formatMemberSheetTarget).join("; ");
     el.hidden = false;
-    el.textContent = `Sheets ${j.enabled ? "enabled" : "disabled by default"}. Targets: ${labels}`;
+    el.textContent = `Sheets ${j.enabled ? "enabled" : "disabled by default"}. Targets: ${labels || "chưa cấu hình"}`;
     el.classList.toggle("err", false);
   } catch (e) {
     el.hidden = false;
