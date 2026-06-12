@@ -11,37 +11,22 @@ function compactString(v) {
   return String(v).trim();
 }
 
+function pushUnique(ids, v) {
+  const s = compactString(v);
+  if (s && !ids.includes(s)) ids.push(s);
+}
+
+function extractIdFromMemVerEntry(item) {
+  if (typeof item === "string" || typeof item === "number") return compactString(item);
+  if (!item || typeof item !== "object") return "";
+  return compactString(item.uid ?? item.userId ?? item.user_id);
+}
+
 export function extractMemberIds(groupMeta) {
   const ids = [];
-  const push = (v) => {
-    const s = compactString(v);
-    if (s && !ids.includes(s)) ids.push(s);
-  };
-
-  const scan = (value) => {
-    if (!value) return;
-    if (typeof value === "string" || typeof value === "number") {
-      push(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) scan(item);
-      return;
-    }
-    if (typeof value === "object") {
-      push(value.uid ?? value.userId ?? value.user_id ?? value.id);
-      if (!ids.length) {
-        for (const k of ["members", "memberIds", "member_ids", "memVerList", "currentMems"]) {
-          if (value[k]) scan(value[k]);
-        }
-      }
-    }
-  };
-
-  scan(groupMeta?.memVerList);
-  if (!ids.length) scan(groupMeta?.memberIds);
-  if (!ids.length) scan(groupMeta?.members);
-  if (!ids.length) scan(groupMeta?.currentMems);
+  const list = groupMeta?.memVerList ?? groupMeta?.memberIds ?? groupMeta?.member_ids ?? groupMeta?.currentMems;
+  if (!Array.isArray(list)) return ids;
+  for (const item of list) pushUnique(ids, extractIdFromMemVerEntry(item));
   return ids;
 }
 
@@ -94,6 +79,8 @@ function rowsToMembers(rows) {
     global_id: r.global_id || "",
     last_update_time: r.last_update_time,
     last_sync_ts: r.last_sync_ts,
+    is_active: Number(r.is_active ?? 1),
+    left_ts: r.left_ts ?? null,
   }));
 }
 
@@ -102,14 +89,37 @@ export function getCachedGroupMembers(groupId) {
   const rows = db
     .prepare(
       `SELECT user_id, display_name, zalo_name, avatar, account_status, type,
-              global_id, last_update_time, last_sync_ts
+              global_id, last_update_time, last_sync_ts, is_active, left_ts
        FROM group_members
-       WHERE group_id = ?
+       WHERE group_id = ? AND COALESCE(is_active, 1) = 1
        ORDER BY rowid ASC`
     )
     .all(gid);
   const last = rows.reduce((m, r) => Math.max(m, Number(r.last_sync_ts || 0)), 0);
   return { groupId: gid, count: rows.length, members: rowsToMembers(rows), lastSyncTs: last || null };
+}
+
+function profileId(raw) {
+  return compactString(raw?.user_id ?? raw?.userId ?? raw?.uid ?? raw?.id);
+}
+
+function profileMapFromResponse(res) {
+  const map = res?.profiles ?? res?.changed_profiles ?? res?.memberMap ?? res?.userInfoMap ?? res ?? {};
+  return map;
+}
+
+function lookupRequestedProfile(map, uid) {
+  if (Array.isArray(map)) {
+    return map.find((x) => profileId(x) === uid) || null;
+  }
+  if (map && typeof map === "object") {
+    const raw = map[uid];
+    if (!raw) return null;
+    const rawId = profileId(raw);
+    if (rawId && rawId !== uid) return null;
+    return raw;
+  }
+  return null;
 }
 
 export async function syncGroupMembers(groupId) {
@@ -133,18 +143,22 @@ export async function syncGroupMembers(groupId) {
   const memberIds = extractMemberIds(meta);
   const syncedAt = Date.now();
   if (!memberIds.length) {
-    return { groupId: gid, count: 0, members: [], syncedAt };
+    const err = new Error("Không tìm thấy memVerList/memberIds hợp lệ; không prune cache để tránh đánh dấu sai toàn bộ nhóm inactive");
+    err.statusCode = 422;
+    err.code = "GROUP_MEMBER_IDS_NOT_FOUND";
+    throw err;
   }
+  const requested = new Set(memberIds);
 
   const normalized = [];
   for (let i = 0; i < memberIds.length; i += MEMBER_INFO_CHUNK) {
     const slice = memberIds.slice(i, i + MEMBER_INFO_CHUNK);
     const res = await api.getGroupMembersInfo(slice);
-    const map = res?.profiles ?? res?.changed_profiles ?? res?.memberMap ?? res?.userInfoMap ?? res ?? {};
+    const map = profileMapFromResponse(res);
     for (const uid of slice) {
-      const raw = map?.[uid] ?? (Array.isArray(map) ? map.find((x) => compactString(x?.uid ?? x?.userId ?? x?.id) === uid) : null) ?? { uid };
+      const raw = lookupRequestedProfile(map, uid) ?? { uid };
       const m = normalizeMember(raw, uid);
-      if (m.user_id) normalized.push(m);
+      if (m.user_id && requested.has(m.user_id)) normalized.push(m);
     }
   }
 
@@ -152,10 +166,10 @@ export async function syncGroupMembers(groupId) {
     const up = db.prepare(`
       INSERT INTO group_members (
         group_id, user_id, display_name, zalo_name, avatar, account_status,
-        type, global_id, last_update_time, last_sync_ts
+        type, global_id, last_update_time, last_sync_ts, is_active, left_ts
       ) VALUES (
         @group_id, @user_id, @display_name, @zalo_name, @avatar, @account_status,
-        @type, @global_id, @last_update_time, @last_sync_ts
+        @type, @global_id, @last_update_time, @last_sync_ts, 1, NULL
       )
       ON CONFLICT(group_id, user_id) DO UPDATE SET
         display_name = excluded.display_name,
@@ -165,9 +179,18 @@ export async function syncGroupMembers(groupId) {
         type = excluded.type,
         global_id = excluded.global_id,
         last_update_time = excluded.last_update_time,
-        last_sync_ts = excluded.last_sync_ts
+        last_sync_ts = excluded.last_sync_ts,
+        is_active = 1,
+        left_ts = NULL
     `);
     for (const item of items) up.run({ group_id: gid, ...item, last_sync_ts: syncedAt });
+
+    const placeholders = memberIds.map(() => "?").join(",");
+    db.prepare(`
+      UPDATE group_members
+      SET is_active = 0, left_ts = ?
+      WHERE group_id = ? AND user_id NOT IN (${placeholders})
+    `).run(syncedAt, gid, ...memberIds);
   });
   tx(normalized);
 

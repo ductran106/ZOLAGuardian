@@ -9,7 +9,7 @@ import { isBotGroupAdmin } from "../../core/groupDiscovery.js";
 import { parseHHMM } from "../../core/watchdogQuiet.js";
 import { loadConfig } from "../../core/loadConfig.js";
 import { getCachedGroupMembers, syncGroupMembers, dedupeMembersForSheet } from "../../core/groupMembers.js";
-import { getMemberSheetTargets, pushMemberNamesToSheets } from "../../core/googleSheetsMembers.js";
+import { getMemberSheetTargets, publicMemberSheetTarget, pushMemberNamesToSheets } from "../../core/googleSheetsMembers.js";
 
 export const featuresRouter = Router();
 export const groupsRouter = Router();
@@ -114,17 +114,13 @@ groupsRouter.get("/lookup-users", (req, res) => {
 
 const GROUP_INFO_CHUNK = 35;
 
-/** GET /api/groups/member-sheet-targets — target Google Sheets public metadata, no secrets */
+/** GET /api/groups/member-sheet-targets — public metadata only.
+ * Mounted under webUiBasicAuthMiddleware in webui/server.js before /api/groups.
+ * Do not return spreadsheetId or write ranges to browser clients.
+ */
 groupsRouter.get("/member-sheet-targets", (_req, res) => {
   const config = loadConfig();
-  const targets = Object.values(getMemberSheetTargets(config)).map((t) => ({
-    key: t.key,
-    label: t.label,
-    sheetName: t.sheetName,
-    startCell: t.startCell,
-    clearRange: t.clearRange,
-    valuesRange: t.valuesRange,
-  }));
+  const targets = Object.values(getMemberSheetTargets(config)).map(publicMemberSheetTarget);
   res.json({
     ok: true,
     enabled: !!config.googleSheets?.enabled,
@@ -174,10 +170,16 @@ groupsRouter.post("/:groupId/members/push-sheets", async (req, res) => {
     }
     const names = members.map((m) => m.display_name);
     const pushedAt = new Date().toISOString();
-    const out = await pushMemberNamesToSheets({ config: loadConfig(), target, names, dryRun: !!dryRun });
+    const out = await pushMemberNamesToSheets({ config: loadConfig(), target, names, groupId, dryRun: !!dryRun });
     res.json({ ok: true, groupId, count: names.length, target, pushedAt, ...out });
   } catch (e) {
-    res.status(e.statusCode || 500).json({ ok: false, code: e.code, error: String(e?.message || e) });
+    res.status(e.statusCode || 500).json({
+      ok: false,
+      code: e.code,
+      partialFailure: !!e.partialFailure,
+      clearRange: e.clearRange,
+      error: String(e?.message || e),
+    });
   }
 });
 

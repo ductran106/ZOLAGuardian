@@ -15,6 +15,8 @@
 //   WEBUI_BASIC_PASSWORD
 //   GOOGLE_SHEETS_ENABLED          — mặc định 0/false
 //   GOOGLE_SHEETS_CREDENTIALS_PATH — service account JSON path (không commit)
+//   GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID — target ID from env only
+//   GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID  — target ID from env only
 //
 // Alias: CREDENTIALS_PATH, ZCA_PATH
 
@@ -118,6 +120,24 @@ export function loadConfig() {
       str(base.googleSheets?.credentialsPath) ??
       "",
   };
+  const memberTargets = {
+    ...(googleSheets.memberTargets && typeof googleSheets.memberTargets === "object"
+      ? googleSheets.memberTargets
+      : {}),
+  };
+  if (str(e.GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID)) {
+    memberTargets.bonngay = {
+      ...(memberTargets.bonngay || {}),
+      spreadsheetId: str(e.GOOGLE_SHEETS_MEMBERS_BONNGAY_SPREADSHEET_ID),
+    };
+  }
+  if (str(e.GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID)) {
+    memberTargets.sheet1 = {
+      ...(memberTargets.sheet1 || {}),
+      spreadsheetId: str(e.GOOGLE_SHEETS_MEMBERS_SHEET1_SPREADSHEET_ID),
+    };
+  }
+  googleSheets.memberTargets = memberTargets;
 
   return {
     ...base,
